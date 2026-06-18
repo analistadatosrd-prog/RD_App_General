@@ -449,4 +449,15 @@ df_vista = st.session_state.inv_filtrado.copy()
 st.markdown("### Tabla")
 st.caption("La tabla se muestra tal cual viene desde SQL, solo filtrada.")
 
-st.dataframe(df_vista, use_container_width=True, height=700)
+columnas_ocultar = [
+    "dias_cobertura",
+    "rotacion",
+    "estado_stock",
+]
+
+df_tabla = df_vista.drop(
+    columns=[c for c in columnas_ocultar if c in df_vista.columns],
+    errors="ignore"
+)
+
+st.dataframe(df_tabla, use_container_width=True, height=700)
