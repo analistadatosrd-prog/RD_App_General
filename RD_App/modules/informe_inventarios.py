@@ -1,11 +1,13 @@
 import io
+
 import pandas as pd
 import streamlit as st
 
 from services.db import fetch_all
 
+
 st.title("Informe de Inventarios")
-st.caption("Vista consolidada de stock, ventas y quiebre de stock.")
+st.caption("Vista consolidada de stock, ventas, quiebre y valorización.")
 st.markdown("---")
 
 
@@ -19,6 +21,13 @@ def fmt_money(v):
 def fmt_int(v):
     try:
         return f"{int(round(float(v))):,}".replace(",", ".")
+    except Exception:
+        return "-"
+
+
+def fmt_float(v, decimals=2):
+    try:
+        return f"{float(v):,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
         return "-"
 
@@ -109,8 +118,21 @@ def to_csv_bytes(df):
 
 def to_excel_bytes(df):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+    engine = None
+    try:
+        import openpyxl  # noqa: F401
+        engine = "openpyxl"
+    except Exception:
+        try:
+            import xlsxwriter  # noqa: F401
+            engine = "xlsxwriter"
+        except Exception:
+            return None
+
+    with pd.ExcelWriter(output, engine=engine) as writer:
         df.to_excel(writer, index=False, sheet_name="inventarios")
+
     return output.getvalue()
 
 
@@ -156,6 +178,7 @@ df_vista = aplicar_filtros(df_base, f_sku, f_titulo, f_sku_variante, f_vendedore
 
 col_dl1, col_dl2, _ = st.columns([1, 1, 2])
 export_df = build_export_df(df_vista)
+excel_bytes = to_excel_bytes(export_df)
 
 with col_dl1:
     st.download_button(
@@ -167,13 +190,17 @@ with col_dl1:
     )
 
 with col_dl2:
-    st.download_button(
-        "Descargar Excel",
-        data=to_excel_bytes(export_df),
-        file_name="inventarios_filtrados.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+    if excel_bytes is not None:
+        st.download_button(
+            "Descargar Excel",
+            data=excel_bytes,
+            file_name="inventarios_filtrados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    else:
+        st.button("Descargar Excel", disabled=True, use_container_width=True)
+        st.caption("Excel no disponible en este entorno; usa CSV.")
 
 st.markdown("---")
 
@@ -202,9 +229,9 @@ with k5:
 with k6:
     st.metric("Und vendidas 30 días", fmt_int(und_30_total))
 with k7:
-    st.metric("Prom. quiebre stock 7 días", f"{quiebre_7_prom:.2f}")
+    st.metric("Prom. quiebre stock 7 días", fmt_float(quiebre_7_prom))
 with k8:
-    st.metric("Prom. quiebre stock 30 días", f"{quiebre_30_prom:.2f}")
+    st.metric("Prom. quiebre stock 30 días", fmt_float(quiebre_30_prom))
 
 st.markdown("---")
 st.markdown(f"**{len(df_vista)} registros**")
@@ -218,6 +245,7 @@ money_cols = [
     "precio_venta_unitario",
     "stock_valorizado",
 ]
+
 int_cols = [
     "stock_disponible",
     "und_vendidas_30_dias",
@@ -234,7 +262,7 @@ for c in int_cols:
 
 for c in ["quiebre_stock_30_dias", "quiebre_stock_7_dias"]:
     if c in df_show.columns:
-        df_show[c] = df_show[c].apply(lambda x: f"{float(x):.2f}" if pd.notnull(x) else "-")
+        df_show[c] = df_show[c].apply(fmt_float)
 
 column_order = [
     "sku",
