@@ -1,4 +1,3 @@
-# modules/informe_costo_foxy.py
 import json
 import time
 from io import BytesIO
@@ -400,15 +399,17 @@ def apply_filters():
 
 
 def excel_bytes(df_vista, df_detalle_vista):
-    output = BytesIO()
-
-    engine = None
     try:
         import xlsxwriter  # noqa: F401
         engine = "xlsxwriter"
     except Exception:
-        engine = "openpyxl"
+        try:
+            import openpyxl  # noqa: F401
+            engine = "openpyxl"
+        except Exception:
+            return None
 
+    output = BytesIO()
     with pd.ExcelWriter(output, engine=engine) as writer:
         df_vista.to_excel(writer, index=False, sheet_name="tabla_final")
         df_detalle_vista.to_excel(writer, index=False, sheet_name="detalle_mla_sku")
@@ -528,6 +529,7 @@ st.dataframe(st.session_state.foxy_df_detalle_vista, use_container_width=True, h
 
 if not st.session_state.foxy_df_vista.empty:
     c1, c2 = st.columns(2)
+
     with c1:
         st.download_button(
             "Descargar CSV",
@@ -542,10 +544,19 @@ if not st.session_state.foxy_df_vista.empty:
             st.session_state.foxy_df_vista,
             st.session_state.foxy_df_detalle_vista,
         )
-        st.download_button(
-            "Descargar Excel",
-            data=excel_data,
-            file_name="informe_costos_foxy_filtrado.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+
+        if excel_data is not None:
+            st.download_button(
+                "Descargar Excel",
+                data=excel_data,
+                file_name="informe_costos_foxy_filtrado.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        else:
+            st.button(
+                "Descargar Excel",
+                disabled=True,
+                use_container_width=True,
+                help="Excel no disponible: falta instalar openpyxl o xlsxwriter en el entorno.",
+            )
