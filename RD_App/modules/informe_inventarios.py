@@ -2,6 +2,7 @@
 
 import pandas as pd
 import streamlit as st
+import psycopg2
 
 from services.db import fetch_all
 
@@ -72,37 +73,33 @@ def normalizar_inventario(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    if "dias_cobertura_30" not in df.columns:
-        if {"stockdisponible", "undvendidas30dias"}.issubset(df.columns):
-            df["dias_cobertura_30"] = df.apply(
-                lambda r: round(r["stockdisponible"] / (r["undvendidas30dias"] / 30), 1)
-                if r["undvendidas30dias"] > 0 else None,
-                axis=1
-            )
+    if "dias_cobertura_30" not in df.columns and {"stockdisponible", "undvendidas30dias"}.issubset(df.columns):
+        df["dias_cobertura_30"] = df.apply(
+            lambda r: round(r["stockdisponible"] / (r["undvendidas30dias"] / 30), 1)
+            if r["undvendidas30dias"] > 0 else None,
+            axis=1
+        )
 
-    if "dias_cobertura_7" not in df.columns:
-        if {"stockdisponible", "undvendidas7dias"}.issubset(df.columns):
-            df["dias_cobertura_7"] = df.apply(
-                lambda r: round(r["stockdisponible"] / (r["undvendidas7dias"] / 7), 1)
-                if r["undvendidas7dias"] > 0 else None,
-                axis=1
-            )
+    if "dias_cobertura_7" not in df.columns and {"stockdisponible", "undvendidas7dias"}.issubset(df.columns):
+        df["dias_cobertura_7"] = df.apply(
+            lambda r: round(r["stockdisponible"] / (r["undvendidas7dias"] / 7), 1)
+            if r["undvendidas7dias"] > 0 else None,
+            axis=1
+        )
 
-    if "rotacion_30" not in df.columns:
-        if {"undvendidas30dias", "stockdisponible"}.issubset(df.columns):
-            df["rotacion_30"] = df.apply(
-                lambda r: round(r["undvendidas30dias"] / r["stockdisponible"], 2)
-                if r["stockdisponible"] > 0 else None,
-                axis=1
-            )
+    if "rotacion_30" not in df.columns and {"undvendidas30dias", "stockdisponible"}.issubset(df.columns):
+        df["rotacion_30"] = df.apply(
+            lambda r: round(r["undvendidas30dias"] / r["stockdisponible"], 2)
+            if r["stockdisponible"] > 0 else None,
+            axis=1
+        )
 
-    if "rotacion_7" not in df.columns:
-        if {"undvendidas7dias", "stockdisponible"}.issubset(df.columns):
-            df["rotacion_7"] = df.apply(
-                lambda r: round(r["undvendidas7dias"] / r["stockdisponible"], 2)
-                if r["stockdisponible"] > 0 else None,
-                axis=1
-            )
+    if "rotacion_7" not in df.columns and {"undvendidas7dias", "stockdisponible"}.issubset(df.columns):
+        df["rotacion_7"] = df.apply(
+            lambda r: round(r["undvendidas7dias"] / r["stockdisponible"], 2)
+            if r["stockdisponible"] > 0 else None,
+            axis=1
+        )
 
     if "estado_stock" not in df.columns and "stockdisponible" in df.columns:
         def clasificar_stock(x):
@@ -115,9 +112,36 @@ def normalizar_inventario(df: pd.DataFrame) -> pd.DataFrame:
             if x <= 5:
                 return "Stock bajo"
             return "Con stock"
+
         df["estado_stock"] = df["stockdisponible"].apply(clasificar_stock)
 
     return df
+
+
+def cargar_inventarios():
+    tablas_posibles = [
+        "rd_tabla_inventarios",
+        "rd_informe_inventarios",
+        "informe_inventarios",
+    ]
+
+    ultimo_error = None
+
+    for tabla in tablas_posibles:
+        try:
+            resultados = fetch_all(f"SELECT * FROM {tabla}")
+            if resultados is not None:
+                return pd.DataFrame(resultados), tabla
+        except psycopg2.errors.UndefinedTable as e:
+            ultimo_error = e
+            continue
+        except Exception as e:
+            ultimo_error = e
+            continue
+
+    if ultimo_error:
+        st.error("No se pudo encontrar una tabla válida para el informe de inventarios.")
+    return pd.DataFrame(), None
 
 
 def apply_filtros(
@@ -187,13 +211,6 @@ def mostrar_metricas(df: pd.DataFrame):
     c5.metric("Quiebres 30 días", fmt_int(quiebres_30))
     c6.metric("Quiebres 7 días", fmt_int(quiebres_7))
 
-    c7, c8 = st.columns(2)
-    with c7:
-        st.metric("Venta 7 días", fmt_money(venta_7))
-    with c8:
-        cobertura_media = df["dias_cobertura_30"].dropna().mean() if "dias_cobertura_30" in df.columns else None
-        st.metric("Cobertura media 30 días", "-" if pd.isna(cobertura_media) else f"{cobertura_media:.1f} días")
-
 
 if not st.session_state.get("authenticated"):
     st.error("No hay una sesión autenticada.")
@@ -201,25 +218,15 @@ if not st.session_state.get("authenticated"):
 
 
 if st.session_state.inv_base.empty:
-    resultados = fetch_all("SELECT * FROM informe_inventarios")
-    if not resultados:
-        resultados = fetch_all("SELECT * FROM rd_informe_inventarios")
-    if not resultados:
-        resultados = fetch_all("SELECT * FROM rd_tabla_inventarios")
-
-    if resultados:
-        df_base = pd.DataFrame(resultados)
+    df_base, tabla_origen = cargar_inventarios()
+    if not df_base.empty:
         df_base = normalizar_inventario(df_base)
         st.session_state.inv_base = df_base.copy()
         st.session_state.inv_filtrado = df_base.copy()
+        st.caption(f"Origen de datos: {tabla_origen}")
     else:
-        st.session_state.inv_base = pd.DataFrame()
-        st.session_state.inv_filtrado = pd.DataFrame()
-
-
-if st.session_state.inv_base.empty:
-    st.warning("No se encontraron datos de inventario en las tablas esperadas.")
-    st.stop()
+        st.warning("No se encontraron datos de inventario en ninguna tabla disponible.")
+        st.stop()
 
 
 df_base = st.session_state.inv_base.copy()
@@ -272,7 +279,6 @@ if str(f_stock_hasta_val).strip():
     except Exception:
         st.warning("Stock máximo inválido. Se ignorará ese filtro.")
 
-
 if btn_filtrar:
     df_filtrado = apply_filtros(
         df_base,
@@ -292,7 +298,6 @@ if btn_filtrar:
 
     st.session_state.inv_filtrado = df_filtrado.copy()
 
-
 df_vista = st.session_state.inv_filtrado.copy()
 
 mostrar_metricas(df_vista)
@@ -301,20 +306,8 @@ st.markdown(f"**{len(df_vista)} registros en la vista**")
 
 df_show = df_vista.copy()
 
-money_cols = [
-    "costofijo",
-    "valorventa30dias",
-    "valorventa7dias",
-    "precioventaunitario",
-    "stockvalorizado",
-]
-int_like_cols = [
-    "stockdisponible",
-    "undvendidas30dias",
-    "undvendidas7dias",
-    "quiebrestock30dias",
-    "quiebrestock7dias",
-]
+money_cols = ["costofijo", "valorventa30dias", "valorventa7dias", "precioventaunitario", "stockvalorizado"]
+int_like_cols = ["stockdisponible", "undvendidas30dias", "undvendidas7dias", "quiebrestock30dias", "quiebrestock7dias"]
 
 for col in money_cols:
     if col in df_show.columns:
@@ -323,26 +316,6 @@ for col in money_cols:
 for col in int_like_cols:
     if col in df_show.columns:
         df_show[col] = df_show[col].apply(fmt_int)
-
-if "dias_cobertura_30" in df_show.columns:
-    df_show["dias_cobertura_30"] = df_show["dias_cobertura_30"].apply(
-        lambda x: "-" if pd.isna(x) else f"{float(x):.1f}"
-    )
-
-if "dias_cobertura_7" in df_show.columns:
-    df_show["dias_cobertura_7"] = df_show["dias_cobertura_7"].apply(
-        lambda x: "-" if pd.isna(x) else f"{float(x):.1f}"
-    )
-
-if "rotacion_30" in df_show.columns:
-    df_show["rotacion_30"] = df_show["rotacion_30"].apply(
-        lambda x: "-" if pd.isna(x) else f"{float(x):.2f}"
-    )
-
-if "rotacion_7" in df_show.columns:
-    df_show["rotacion_7"] = df_show["rotacion_7"].apply(
-        lambda x: "-" if pd.isna(x) else f"{float(x):.2f}"
-    )
 
 columnas_preferidas = [
     "vendedor",
@@ -375,8 +348,6 @@ st.dataframe(
     use_container_width=True,
     height=650,
 )
-
-st.markdown("---")
 
 csv_export = df_vista.to_csv(index=False).encode("utf-8")
 st.download_button(
