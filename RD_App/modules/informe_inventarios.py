@@ -10,124 +10,54 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown("""
-<style>
-.block-container {
-    padding-top: 1.2rem;
-    padding-bottom: 2rem;
-}
+with st.container():
+    csv_buffer = io.BytesIO()
+    st.session_state.inv_filtrado.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
 
-.inv-card {
-    background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
-    border: 1px solid rgba(255,255,255,.08);
-    border-radius: 18px;
-    padding: 16px 18px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.18);
-    min-height: 120px;
-}
+    st.markdown('<div class="filter-box">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
 
-.inv-card-title {
-    font-size: 0.92rem;
-    color: #cbd5e1;
-    margin-bottom: 10px;
-    font-weight: 600;
-}
+    f1, f2, f3, f4 = st.columns(4)
 
-.inv-card-value {
-    font-size: 1.8rem;
-    font-weight: 800;
-    color: #ffffff;
-    line-height: 1.1;
-}
+    with f1:
+        vendedores = ["Todos"]
+        if col_vendedor:
+            vendedores += sorted(df_base[col_vendedor].dropna().astype(str).unique().tolist())
+        filtro_vendedor = st.selectbox("Vendedor", vendedores)
 
-.inv-card-sub {
-    margin-top: 10px;
-    font-size: 0.9rem;
-    color: #94a3b8;
-}
+    with f2:
+        filtro_sku = st.text_input("SKU")
 
-.filter-box {
-    background: linear-gradient(180deg, #081120 0%, #0f172a 100%);
-    border: 1px solid rgba(255,255,255,.08);
-    border-radius: 18px;
-    padding: 20px;
-    margin-bottom: 22px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.14);
-}
+    with f3:
+        filtro_titulo = st.text_input("Título")
 
-.visual-btn {
-    width: 100%;
-}
+    with f4:
+        filtro_sku_variante = st.text_input("SKU Variante")
 
-.visual-btn .stButton > button,
-.visual-btn .stDownloadButton > button {
-    width: 100%;
-    min-height: 46px;
-    height: 46px;
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,.08);
-    color: white;
-    font-weight: 700;
-    font-size: 0.95rem;
-    padding: 0 16px;
-}
+    b1, b2, b3 = st.columns(3)
 
-.visual-btn .stButton > button {
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-    box-shadow: 0 10px 20px rgba(37,99,235,.22);
-}
+    with b1:
+        st.markdown('<div class="visual-btn">', unsafe_allow_html=True)
+        aplicar = st.button("Aplicar filtros", use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-.visual-btn.secondary .stButton > button {
-    background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
-    box-shadow: 0 10px 20px rgba(15,23,42,.22);
-}
+    with b2:
+        st.markdown('<div class="visual-btn secondary">', unsafe_allow_html=True)
+        limpiar = st.button("Limpiar filtros", use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-.visual-btn.export .stDownloadButton > button {
-    background: linear-gradient(135deg, #059669 0%, #047857 100%);
-    box-shadow: 0 10px 20px rgba(5,150,105,.22);
-}
+    with b3:
+        st.markdown('<div class="visual-btn export">', unsafe_allow_html=True)
+        st.download_button(
+            "Exportar CSV",
+            data=csv_buffer.getvalue(),
+            file_name="informe_inventarios.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
 
-div[data-baseweb="select"] > div,
-div[data-baseweb="input"] > div {
-    min-height: 46px;
-    border-radius: 14px !important;
-}
-
-.status-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    border-radius: 999px;
-    padding: 8px 12px;
-    font-weight: 700;
-    font-size: .9rem;
-}
-
-.status-red {
-    background: rgba(239,68,68,.16);
-    color: #fecaca;
-    border: 1px solid rgba(239,68,68,.28);
-}
-
-.status-yellow {
-    background: rgba(245,158,11,.16);
-    color: #fde68a;
-    border: 1px solid rgba(245,158,11,.28);
-}
-
-.status-green {
-    background: rgba(34,197,94,.16);
-    color: #bbf7d0;
-    border: 1px solid rgba(34,197,94,.28);
-}
-
-.section-title {
-    font-size: 1.1rem;
-    font-weight: 800;
-    margin: .1rem 0 1rem 0;
-}
-</style>
-""", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 st.title("Informe de inventarios")
 st.caption("Fuente: PostgreSQL | tabla rd_tabla_inventarios")
