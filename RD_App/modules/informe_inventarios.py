@@ -134,34 +134,6 @@ label[data-testid="stWidgetLabel"] p {
     color: #dbe4f0 !important;
 }
 
-.status-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    border-radius: 999px;
-    padding: 8px 12px;
-    font-weight: 700;
-    font-size: .9rem;
-}
-
-.status-red {
-    background: rgba(239,68,68,.16);
-    color: #fecaca;
-    border: 1px solid rgba(239,68,68,.28);
-}
-
-.status-yellow {
-    background: rgba(245,158,11,.16);
-    color: #fde68a;
-    border: 1px solid rgba(245,158,11,.28);
-}
-
-.status-green {
-    background: rgba(34,197,94,.16);
-    color: #bbf7d0;
-    border: 1px solid rgba(34,197,94,.28);
-}
-
 .section-title {
     font-size: 1.08rem;
     font-weight: 800;
@@ -225,14 +197,6 @@ def to_numeric_safe(series):
     return pd.to_numeric(series, errors="coerce").fillna(0)
 
 
-def build_quiebre_status(valor):
-    if valor < 30:
-        return "⚠️ Quiebre próximo", "status-red"
-    elif valor <= 60:
-        return "🟡 Estable", "status-yellow"
-    return "✅ Quiebre alto", "status-green"
-
-
 def render_card(title, value, subtext=""):
     st.markdown(
         f"""
@@ -240,22 +204,6 @@ def render_card(title, value, subtext=""):
             <div class="inv-card-title">{title}</div>
             <div class="inv-card-value">{value}</div>
             <div class="inv-card-sub">{subtext}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-def render_status_card(title, promedio_quiebre):
-    texto, clase = build_quiebre_status(promedio_quiebre)
-    st.markdown(
-        f"""
-        <div class="inv-card">
-            <div class="inv-card-title">{title}</div>
-            <div class="inv-card-value">{fmt_number(promedio_quiebre, 1)} días</div>
-            <div class="inv-card-sub">
-                <span class="status-chip {clase}">{texto}</span>
-            </div>
         </div>
         """,
         unsafe_allow_html=True
@@ -317,11 +265,9 @@ col_stock_valorizado = find_col(df_base, ["stock_valorizado", "stockvalorizado"]
 
 col_valor_venta_7 = find_col(df_base, ["valor_venta_7_dias", "valorventa7dias"])
 col_und_7 = find_col(df_base, ["und_vendidas_7_dias", "undvendidas7dias"])
-col_quiebre_7 = find_col(df_base, ["quiebre_stock_7_dias", "quiebrestock7dias"])
 
 col_valor_venta_30 = find_col(df_base, ["valor_venta_30_dias", "valorventa30dias"])
 col_und_30 = find_col(df_base, ["und_vendidas_30_dias", "undvendidas30dias"])
-col_quiebre_30 = find_col(df_base, ["quiebre_stock_30_dias", "quiebrestock30dias"])
 
 df_vista = st.session_state.inv_filtrado.copy()
 
@@ -331,13 +277,9 @@ stock_valorizado = to_numeric_safe(df_vista[col_stock_valorizado]).sum() if col_
 
 valor_vendido_7 = to_numeric_safe(df_vista[col_valor_venta_7]).sum() if col_valor_venta_7 else 0
 und_vendidas_7 = to_numeric_safe(df_vista[col_und_7]).sum() if col_und_7 else 0
-prom_dia_7 = und_vendidas_7 / 7 if und_vendidas_7 else 0
-quiebre_7_prom = to_numeric_safe(df_vista[col_quiebre_7]).mean() if col_quiebre_7 and len(df_vista) > 0 else 0
 
 valor_vendido_30 = to_numeric_safe(df_vista[col_valor_venta_30]).sum() if col_valor_venta_30 else 0
 und_vendidas_30 = to_numeric_safe(df_vista[col_und_30]).sum() if col_und_30 else 0
-prom_dia_30 = und_vendidas_30 / 30 if und_vendidas_30 else 0
-quiebre_30_prom = to_numeric_safe(df_vista[col_quiebre_30]).mean() if col_quiebre_30 and len(df_vista) > 0 else 0
 
 st.markdown('<div class="section-title">Resumen visual</div>', unsafe_allow_html=True)
 
@@ -351,27 +293,19 @@ with r1c3:
 
 st.markdown('<div class="kpi-row-gap"></div>', unsafe_allow_html=True)
 
-r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+r2c1, r2c2 = st.columns(2)
 with r2c1:
     render_card("Valor vendido 7 días", fmt_money(valor_vendido_7), "Total valor vendido últimos 7 días")
 with r2c2:
     render_card("Und vendidas 7 días", fmt_number(und_vendidas_7), "Suma de unidades vendidas")
-with r2c3:
-    render_card("Prom ventas * día 7", fmt_number(prom_dia_7, 2), "und vendidas 7 días / 7")
-with r2c4:
-    render_status_card("Quiebre stock 7 días", quiebre_7_prom)
 
 st.markdown('<div class="kpi-row-gap"></div>', unsafe_allow_html=True)
 
-r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+r3c1, r3c2 = st.columns(2)
 with r3c1:
     render_card("Valor vendido 30 días", fmt_money(valor_vendido_30), "Total valor vendido últimos 30 días")
 with r3c2:
     render_card("Und vendidas 30 días", fmt_number(und_vendidas_30), "Suma de unidades vendidas")
-with r3c3:
-    render_card("Prom ventas * día 30", fmt_number(prom_dia_30, 2), "und vendidas 30 días / 30")
-with r3c4:
-    render_status_card("Quiebre stock 30 días", quiebre_30_prom)
 
 with st.container():
     st.markdown('<div class="filter-box">', unsafe_allow_html=True)
@@ -445,6 +379,22 @@ if aplicar:
     st.rerun()
 
 df_vista = st.session_state.inv_filtrado.copy()
+
+cols_ocultar = [
+    "dias_cobertura",
+    "dias_de_cobertura",
+    "rotacion",
+    "rotacion_stock",
+    "estado_stock",
+    "quiebre_stock_7_dias",
+    "quiebrestock7dias",
+    "quiebre_stock_30_dias",
+    "quiebrestock30dias",
+]
+
+cols_drop = [c for c in df_vista.columns if c.lower() in [x.lower() for x in cols_ocultar]]
+if cols_drop:
+    df_vista = df_vista.drop(columns=cols_drop)
 
 st.markdown("### Tabla")
 st.caption("La tabla se muestra tal cual viene desde SQL, solo filtrada.")
