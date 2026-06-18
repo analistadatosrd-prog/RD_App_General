@@ -2,7 +2,17 @@ import io
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Informe de Inventarios", page_icon="📦", layout="wide")
+from services.db import fetch_all
+
+st.title("Informe de Inventarios")
+st.caption("Consulta de stock, ventas y quiebres desde la tabla informada en Postgres.")
+st.markdown("---")
+
+
+# =========================
+# Config
+# =========================
+TABLA_INVENTARIOS = "tabla_informada"
 
 
 # =========================
@@ -45,13 +55,6 @@ def fmt_int(x):
         return "0"
 
 
-def fmt_pct(x):
-    try:
-        return f"{float(x):.1f}%"
-    except Exception:
-        return "0.0%"
-
-
 def normalizar_columnas(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip().lower() for c in df.columns]
@@ -91,7 +94,7 @@ def normalizar_columnas(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in esperadas:
         if col not in df.columns:
-            df[col] = 0 if col != "tituloecom" and col != "sku" and col != "skuvariante" and col != "vendedor" else ""
+            df[col] = "" if col in ["sku", "tituloecom", "skuvariante", "vendedor"] else 0
 
     numericas = [
         "costofijo",
@@ -181,50 +184,32 @@ def exportar_excel(df):
 
 
 # =========================
-# UI
+# Carga desde SQL
 # =========================
-st.title("Informe de Inventarios")
-st.caption("Carga un CSV de inventario y analiza stock, ventas y quiebres.")
-st.markdown("---")
-
-archivo = st.file_uploader("Sube el archivo CSV de inventarios", type=["csv"])
-
-if archivo is None:
-    st.info("Debes subir un archivo CSV para continuar.")
+try:
+    resultados = fetch_all(f"SELECT * FROM {TABLA_INVENTARIOS}")
+except Exception as e:
+    st.error(f"No se pudo consultar la tabla {TABLA_INVENTARIOS}: {e}")
     st.stop()
 
-# =========================
-# Lectura robusta
-# =========================
-raw_bytes = archivo.getvalue()
-df = None
+if not resultados:
+    st.warning(f"La tabla {TABLA_INVENTARIOS} no devolvió registros.")
+    st.stop()
 
-for sep in [",", ";", "\t", "|"]:
-    try:
-        tmp = pd.read_csv(io.BytesIO(raw_bytes), sep=sep, encoding="utf-8")
-        if tmp.shape[1] > 3:
-            df = tmp
-            break
-    except Exception:
-        pass
-
-if df is None:
-    try:
-        df = pd.read_csv(io.BytesIO(raw_bytes), sep=",", encoding="latin1")
-    except Exception:
-        st.error("No se pudo leer el archivo. Revisa separador y codificación.")
-        st.stop()
-
+df = pd.DataFrame(resultados)
 df = normalizar_columnas(df)
+
+st.success(f"Datos cargados desde SQL: {len(df)} registros")
 
 # =========================
 # Filtros
 # =========================
 st.markdown("### Filtros")
 
-col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+col1, col2, col3, col4 = st.columns(4)
 
 vendedores = sorted([x for x in df["vendedor"].dropna().unique().tolist() if str(x).strip()])
+
 with col1:
     filtro_vendedor = st.selectbox("Vendedor", ["Todos"] + vendedores)
 with col2:
@@ -403,9 +388,6 @@ st.dataframe(
     },
 )
 
-# =========================
-# Descarga
-# =========================
 excel_bytes = exportar_excel(tabla)
 
 st.download_button(
