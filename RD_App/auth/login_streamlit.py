@@ -1,87 +1,94 @@
+import json
+import requests
 import streamlit as st
-from passlib.context import CryptContext
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from services.db import fetch_one, execute
+LOGIN_URL = "https://api.ecomexperts.com/users/users/doLogin.json"
+COMMON_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Accept-Encoding": "gzip, deflate",
+}
+TIMEOUT = (20, 90)
 
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    default="bcrypt",
-    bcrypt__rounds=12,
-    truncate_error=True,
-)
 
-
-def login_local(username, password):
-    user = fetch_one(
-        "SELECT * FROM rd_usuarios WHERE username = %s AND is_active = true",
-        (username,)
+def build_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=4,
+        connect=4,
+        read=4,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=frozenset(["POST"]),
+        raise_on_status=False,
     )
-    if not user:
-        return None
-
-    if not pwd_context.verify(password, user["password_hash"]):
-        return None
-
-    return user
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=20, pool_maxsize=20)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    session.headers.update(COMMON_HEADERS)
+    return session
 
 
-def _build_ecom_session(user: dict):
-    return {
-        "username": user.get("username"),
-        "user_id": user.get("id"),
-        "authenticated": True,
-    }
+def login_session(email: str, password: str) -> requests.Session:
+    session = build_session()
+    payload_login = {"User": {"email_address": email, "password": password}}
+
+    resp = session.post(LOGIN_URL, data=json.dumps(payload_login), timeout=TIMEOUT)
+    resp.raise_for_status()
+
+    try:
+        body = resp.json()
+    except Exception:
+        body = {}
+
+    if isinstance(body, dict) and (body.get("error") or body.get("errors")):
+        raise ValueError(body.get("error") or body.get("errors"))
+
+    if len(session.cookies) == 0:
+        raise ValueError("No se recibió cookie de sesión válida desde EcomExperts.")
+
+    return session
 
 
 def login_ecom():
-    col1, col2, col3 = st.columns([1, 1.2, 1])
+    left, center, right = st.columns([1, 1.15, 1])
 
-    with col2:
-        st.markdown("## RD App")
-        st.markdown("Acceso con credenciales EcomExperts")
+    with center:
+        st.markdown("## Iniciar sesión")
+        st.caption("Acceso con credenciales de EcomExperts")
         st.markdown("---")
 
-        username = st.text_input("Usuario", key="login_username")
-        password = st.text_input("Contraseña", type="password", key="login_password")
+        email = st.text_input("Correo EcomExperts", key="ecom_email_input")
+        password = st.text_input(
+            "Contraseña EcomExperts",
+            type="password",
+            key="ecom_password_input"
+        )
 
-        if st.button("Ingresar", use_container_width=True, key="btn_login"):
-            user = login_local(username, password)
+        login_clicked = st.button(
+            "Ingresar",
+            use_container_width=True,
+            type="primary",
+            key="btn_login_ecom"
+        )
 
-            if user:
-                st.session_state["authenticated"] = True
-                st.session_state["user_info"] = {
-                    "id": user.get("id"),
-                    "username": user.get("username"),
-                    "name": user.get("nombre") or user.get("username"),
-                    "email": user.get("email"),
-                }
-                st.session_state["ecom_session"] = _build_ecom_session(user)
-                st.success("Login exitoso.")
-                st.rerun()
+        if login_clicked:
+            if not email or not password:
+                st.warning("Debes ingresar correo y contraseña de EcomExperts.")
             else:
-                st.error("Usuario o contraseña incorrectos")
+                try:
+                    with st.spinner("Validando credenciales con EcomExperts..."):
+                        session = login_session(email, password)
 
-        st.markdown("---")
-        with st.expander("Cambiar contraseña"):
-            oldpwd = st.text_input("Contraseña actual", type="password", key="oldpwd")
-            newpwd = st.text_input("Nueva contraseña", type="password", key="newpwd")
-            conpwd = st.text_input("Confirmar nueva contraseña", type="password", key="conpwd")
+                    st.session_state["authenticated"] = True
+                    st.session_state["ecom_session"] = session
+                    st.session_state["ecom_email"] = email
+                    st.rerun()
 
-            if st.button("Actualizar contraseña", key="btn_actualizar_pwd", use_container_width=True):
-                if not username.strip():
-                    st.error("Ingresa primero tu usuario.")
-                elif newpwd != conpwd:
-                    st.error("Las contraseñas nuevas no coinciden.")
-                elif len(newpwd) < 6:
-                    st.error("La nueva contraseña debe tener al menos 6 caracteres.")
-                else:
-                    user = login_local(username, oldpwd)
-                    if not user:
-                        st.error("Contraseña actual incorrecta.")
-                    else:
-                        new_hash = pwd_context.hash(newpwd)
-                        execute(
-                            "UPDATE rd_usuarios SET password_hash = %s WHERE username = %s",
-                            (new_hash, username)
-                        )
-                        st.success("Contraseña actualizada correctamente.")
+                except Exception as e:
+                    st.session_state["authenticated"] = False
+                    st.session_state["ecom_session"] = None
+                    st.session_state["ecom_email"] = None
+                    st.error(f"No fue posible validar las credenciales: {e}")
