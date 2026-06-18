@@ -401,9 +401,18 @@ def apply_filters():
 
 def excel_bytes(df_vista, df_detalle_vista):
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+    engine = None
+    try:
+        import xlsxwriter  # noqa: F401
+        engine = "xlsxwriter"
+    except Exception:
+        engine = "openpyxl"
+
+    with pd.ExcelWriter(output, engine=engine) as writer:
         df_vista.to_excel(writer, index=False, sheet_name="tabla_final")
         df_detalle_vista.to_excel(writer, index=False, sheet_name="detalle_mla_sku")
+
     return output.getvalue()
 
 
