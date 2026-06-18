@@ -82,8 +82,15 @@ def calcular_rentabilidad(producto, precio_sim, pct_cuotas, incluir_envio: bool)
     rango_envio = clasificar_rango_envio(precio_sim)
     rango_und = clasificar_rango_und(precio_sim)
 
-    costo_envio_sim = lookup_costo_envio(rango_peso, rango_envio) if incluir_envio else 0.0
-    costo_und_sim = lookup_costo_und(rango_peso, rango_und) if rango_und != "No Aplica" else 0.0
+    if incluir_envio:
+        costo_envio_sim = lookup_costo_envio(rango_peso, rango_envio)
+    else:
+        costo_envio_sim = 0.0
+
+    if rango_und != "No Aplica":
+        costo_und_sim = lookup_costo_und(rango_peso, rango_und)
+    else:
+        costo_und_sim = 0.0
 
     factor_iva = 1.0 + (iva_tasa or 0.0)
     if factor_iva <= 0:
@@ -181,53 +188,148 @@ def mostrar_comparativo(producto, sim, nombre_campania=""):
 
     col_actual, col_sim = st.columns(2)
 
-    with col_actual:
-        st.markdown("**Actual**")
-        st.metric("Precio", fmt(producto.get("precio_venta_final")))
-        st.metric("Rentabilidad", fmt(producto.get("rentabilidad")))
-        st.metric("% Rentabilidad", f"{pct_actual:.2f}%")
+    card_style = (
+        "border:1px solid #444;"
+        "border-radius:6px;"
+        "padding:10px;"
+        "margin-bottom:10px;"
+        "background-color:#111;"
+    )
+    value_green_style = "color:#00c853;font-weight:bold;font-size:1.1rem;"
 
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    ["Costo fijo (final)", fmt(producto.get("costo_fijo_ecom"))],
-                    ["Costo fijo antiguo", fmt(producto.get("costo_fijo_ecom_antiguo"))],
-                    ["Costo fijo nuevo", fmt(producto.get("costo_fijo_ecom_nuevo"))],
-                    ["Costo envío", fmt(producto.get("costo_envio"))],
-                    ["Costo und vendida", fmt(producto.get("costo_und_vendida"))],
-                    ["Costo venta", fmt(producto.get("costo_venta"))],
-                    ["IVA", fmt(producto.get("valor_iva"))],
-                    ["% Costo cuotas", f"{float(producto.get('pct_costo_cuotas') or 0) * 100:.2f}%"],
-                    ["% Costo venta", f"{float(producto.get('pct_costo_venta') or 0) * 100:.2f}%"],
-                    ["Campaña cuotas", nombre_campania or "Sin cuotas"],
-                ]
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
+    with col_actual:
+        st.markdown("Actual")
+        ca1, ca2, ca3 = st.columns(3)
+
+        with ca1:
+            st.markdown(
+                f"""
+                <div style="{card_style}">
+                  <div>Precio</div>
+                  <div style="font-weight:bold;font-size:1.2rem;">{fmt(producto.get('precio_venta_final'))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with ca2:
+            st.markdown(
+                f"""
+                <div style="{card_style}">
+                  <div>Rentabilidad</div>
+                  <div style="{value_green_style}">{fmt(producto.get('rentabilidad'))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with ca3:
+            st.markdown(
+                f"""
+                <div style="{card_style}">
+                  <div>% Rentabilidad</div>
+                  <div style="{value_green_style}">{pct_actual:.2f}%</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        html_actual = f"""
+        <div style="{card_style}">
+          <table style="width:100%;font-size:0.9rem;">
+            <tr>
+              <td>Costo fijo (final):</td><td>{fmt(producto.get('costo_fijo_ecom'))}</td>
+              <td>Costo venta:</td><td>{fmt(producto.get('costo_venta'))}</td>
+            </tr>
+            <tr>
+              <td>Costo fijo antiguo:</td><td>{fmt(producto.get('costo_fijo_ecom_antiguo'))}</td>
+              <td>Costo fijo nuevo:</td><td>{fmt(producto.get('costo_fijo_ecom_nuevo'))}</td>
+            </tr>
+            <tr>
+              <td>Costo envío:</td><td>{fmt(producto.get('costo_envio'))}</td>
+              <td>dto_meli:</td><td>{fmt(producto.get('dto_meli'))}</td>
+            </tr>
+            <tr>
+              <td>% Costo cuotas:</td><td>{float(producto.get('pct_costo_cuotas') or 0) * 100:.2f}%</td>
+              <td>Devolución meli:</td><td>{fmt(producto.get('devolucion_dto_meli'))}</td>
+            </tr>
+            <tr>
+              <td>Costo und vendida:</td><td>{fmt(producto.get('costo_und_vendida'))}</td>
+              <td>Campaña cuotas:</td><td>{nombre_campania or 'Sin cuotas'}</td>
+            </tr>
+            <tr>
+              <td>IVA:</td><td>{fmt(producto.get('valor_iva'))}</td>
+              <td>% Costo venta:</td><td>{float(producto.get('pct_costo_venta') or 0) * 100:.2f}%</td>
+            </tr>
+          </table>
+        </div>
+        """
+        st.markdown(html_actual, unsafe_allow_html=True)
 
     with col_sim:
-        st.markdown("**Simulado**")
-        st.metric("Precio", fmt(sim["precio_venta_final_sim"]))
-        st.metric("Rentabilidad", fmt(sim["rentabilidad_sim"]))
-        st.metric("% Rentabilidad", f"{sim['pct_rentabilidad_sim']:.2f}%")
+        st.markdown("Simulado")
+        cs1, cs2, cs3 = st.columns(3)
 
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    ["Costo fijo", fmt(sim["costo_fijo_sim"])],
-                    ["Costo envío", fmt(sim["costo_envio_sim"])],
-                    ["Costo und vendida", fmt(sim["costo_und_vendida_sim"])],
-                    ["Costo venta", fmt(sim["costo_venta_sim"])],
-                    ["IVA", fmt(sim["valor_iva_sim"])],
-                    ["% Costo cuotas", f"{sim['pct_costo_cuotas_sim']:.2f}%"],
-                    ["% Costo venta", f"{sim['pct_costo_venta_sim']:.2f}%"],
-                    ["Campaña cuotas", nombre_campania or "Sin cuotas"],
-                ]
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
+        with cs1:
+            st.markdown(
+                f"""
+                <div style="{card_style}">
+                  <div>Precio</div>
+                  <div style="font-weight:bold;font-size:1.2rem;">{fmt(sim['precio_venta_final_sim'])}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with cs2:
+            st.markdown(
+                f"""
+                <div style="{card_style}">
+                  <div>Rentabilidad</div>
+                  <div style="{value_green_style}">{fmt(sim['rentabilidad_sim'])}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with cs3:
+            st.markdown(
+                f"""
+                <div style="{card_style}">
+                  <div>% Rentabilidad</div>
+                  <div style="{value_green_style}">{sim['pct_rentabilidad_sim']:.2f}%</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        html_sim = f"""
+        <div style="{card_style}">
+          <table style="width:100%;font-size:0.9rem;">
+            <tr>
+              <td>Costo fijo:</td><td>{fmt(sim['costo_fijo_sim'])}</td>
+              <td>Costo venta:</td><td>{fmt(sim['costo_venta_sim'])}</td>
+            </tr>
+            <tr>
+              <td>Costo envío:</td><td>{fmt(sim['costo_envio_sim'])}</td>
+              <td>dto_meli:</td><td>$ 0</td>
+            </tr>
+            <tr>
+              <td>% Costo cuotas:</td><td>{sim['pct_costo_cuotas_sim']:.2f}%</td>
+              <td>Devolución meli:</td><td>$ 0</td>
+            </tr>
+            <tr>
+              <td>Costo und vendida:</td><td>{fmt(sim['costo_und_vendida_sim'])}</td>
+              <td>Campaña cuotas:</td><td>{nombre_campania or 'Sin cuotas'}</td>
+            </tr>
+            <tr>
+              <td>IVA:</td><td>{fmt(sim['valor_iva_sim'])}</td>
+              <td>% Costo venta:</td><td>{sim['pct_costo_venta_sim']:.2f}%</td>
+            </tr>
+          </table>
+        </div>
+        """
+        st.markdown(html_sim, unsafe_allow_html=True)
 
     diff_rent = sim["rentabilidad_sim"] - float(producto.get("rentabilidad") or 0)
     diff_pct = sim["pct_rentabilidad_sim"] - pct_actual
@@ -235,14 +337,15 @@ def mostrar_comparativo(producto, sim, nombre_campania=""):
     col_v1, col_v2 = st.columns(2)
     with col_v1:
         if diff_rent >= 0:
-            st.success(f"Variación rentabilidad: +{fmt(diff_rent)}")
+            st.success(f"💲 Variación Rentabilidad: +{fmt(diff_rent)}")
         else:
-            st.error(f"Variación rentabilidad: {fmt(diff_rent)}")
+            st.error(f"💲 Variación Rentabilidad: {fmt(diff_rent)}")
+
     with col_v2:
         if diff_pct >= 0:
-            st.success(f"Variación % rentabilidad: +{diff_pct:.2f}%")
+            st.success(f"📈 Variación % Rentabilidad: +{diff_pct:.2f}%")
         else:
-            st.error(f"Variación % rentabilidad: {diff_pct:.2f}%")
+            st.error(f"📉 Variación % Rentabilidad: {diff_pct:.2f}%")
 
 
 def apply_filtros(df, f_ml_id, f_titulo, f_sku, f_ml_sinc, f_estado, f_tipo, f_logistica, f_envio):
@@ -253,18 +356,27 @@ def apply_filtros(df, f_ml_id, f_titulo, f_sku, f_ml_sinc, f_estado, f_tipo, f_l
 
     if f_ml_id.strip():
         vista = vista[vista["ml_id"].astype(str).str.contains(f_ml_id.strip(), case=False, na=False)]
+
     if f_titulo.strip():
         vista = vista[vista["titulo_ecom"].astype(str).str.contains(f_titulo.strip(), case=False, na=False)]
+
     if f_sku.strip() and "sku" in vista.columns:
         vista = vista[vista["sku"].astype(str).str.contains(f_sku.strip(), case=False, na=False)]
+
     if f_ml_sinc.strip() and "ml_id_sincronizados" in vista.columns:
-        vista = vista[vista["ml_id_sincronizados"].astype(str).str.contains(f_ml_sinc.strip(), case=False, na=False)]
+        vista = vista[
+            vista["ml_id_sincronizados"].astype(str).str.contains(f_ml_sinc.strip(), case=False, na=False)
+        ]
+
     if f_estado != "Todos" and "estado_meli" in vista.columns:
         vista = vista[vista["estado_meli"] == f_estado]
+
     if f_tipo != "Todos" and "tipo_publicacion" in vista.columns:
         vista = vista[vista["tipo_publicacion"] == f_tipo]
+
     if f_logistica != "Todas" and "logistica" in vista.columns:
         vista = vista[vista["logistica"] == f_logistica]
+
     if f_envio == "Si" and "envio_gratis" in vista.columns:
         vista = vista[vista["envio_gratis"] == True]
     elif f_envio == "No" and "envio_gratis" in vista.columns:
@@ -418,7 +530,8 @@ if btn_filtrar:
             f_logistica,
             f_envio,
         )
-        df_vista = df_vista.head(limite) if limite else df_vista
+        if limite:
+            df_vista = df_vista.head(limite)
         st.session_state.df_filtrado = df_vista.copy()
         st.session_state.seleccionados = []
         st.session_state.pop("sim_e1_params", None)
@@ -456,7 +569,24 @@ for col in [
 if "pct_rentabilidad" in df_show.columns:
     df_show["pct_rentabilidad"] = (df_show["pct_rentabilidad"].astype(float) * 100).round(2)
 
-st.dataframe(df_show, use_container_width=True, height=500)
+st.dataframe(
+    df_show,
+    use_container_width=True,
+    height=500,
+    column_config={
+        "ml_id": st.column_config.TextColumn("ML ID", width="medium"),
+        "titulo_ecom": st.column_config.TextColumn("Título", width="large"),
+        "sku": st.column_config.TextColumn("SKU", width="medium"),
+        "estado_meli": st.column_config.TextColumn("Estado", width="small"),
+        "tipo_publicacion": st.column_config.TextColumn("Tipo", width="medium"),
+        "logistica": st.column_config.TextColumn("Logística", width="medium"),
+        "envio_gratis": st.column_config.TextColumn("Envío Gratis", width="small"),
+        "campaign_ofrecida": st.column_config.TextColumn("Campaign", width="medium"),
+        "rango_peso_facturable": st.column_config.TextColumn("Rango Peso", width="medium"),
+        "rango_valor_costo_envio": st.column_config.TextColumn("Rango Envío", width="medium"),
+        "rango_valor_costo_und_vendida": st.column_config.TextColumn("Rango Und", width="medium"),
+    }
+)
 
 st.markdown("---")
 st.markdown("**Selecciona publicaciones para simular**")
@@ -468,6 +598,7 @@ with col_sel_all:
     if st.button("Seleccionar todas", key="btn_sel_all"):
         st.session_state.seleccionados = [str(r["ml_id"]) for r in resultados_vista]
         st.rerun()
+
 with col_des_all:
     if st.button("Deseleccionar todas", key="btn_des_all"):
         st.session_state.seleccionados = []
@@ -561,7 +692,9 @@ if st.session_state.seleccionados:
             producto = next((r for r in base_records if str(r["ml_id"]) == str(ml_id)), None)
             if not producto:
                 continue
+
             sim = calcular_rentabilidad(producto, p["precio"], pct_cuotas, incluir_envio)
+
             with st.expander(f"{producto.get('titulo_ecom', '')} | ML: {ml_id}", expanded=True):
                 mostrar_comparativo(producto, sim, nombre_campania=p["campaign"])
 
@@ -575,8 +708,10 @@ if st.session_state.seleccionados:
             producto = next((r for r in base_records if str(r["ml_id"]) == str(ml_id)), None)
             if not producto:
                 continue
+
             precio_sug = simular_escenario_2(producto, p["pct_obj"], pct_cuotas2, incluir_envio2)
             sim2 = calcular_rentabilidad(producto, precio_sug, pct_cuotas2, incluir_envio2)
+
             with st.expander(f"{producto.get('titulo_ecom', '')} | ML: {ml_id}", expanded=True):
                 st.markdown(
                     f"**Precio sugerido para {p['pct_obj']:.1f}% de rentabilidad: {fmt(precio_sug)}**"
