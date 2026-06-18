@@ -1,67 +1,47 @@
-import io
+# modules/informe_inventarios.py
+
 import pandas as pd
 import streamlit as st
 
 from services.db import fetch_all
 
 st.title("Informe de Inventarios")
-st.caption("Consulta de stock, ventas y quiebres desde la tabla informada en Postgres.")
+st.caption("Vista consolidada de stock, ventas, valorización y quiebres por SKU.")
 st.markdown("---")
 
 
-# =========================
-# Config
-# =========================
-TABLA_INVENTARIOS = "tabla_informada"
+for key, default in [
+    ("inv_base", pd.DataFrame()),
+    ("inv_filtrado", pd.DataFrame()),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 
-# =========================
-# Helpers
-# =========================
-def to_num(x):
-    if pd.isna(x):
-        return 0.0
-    if isinstance(x, (int, float)):
-        return float(x)
-
-    s = str(x).strip()
-    if s == "":
-        return 0.0
-
-    s = s.replace("$", "").replace(" ", "")
-
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
-
+def fmt_money(valor):
     try:
-        return float(s)
+        return f"$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception:
-        return 0.0
+        return "-"
 
 
-def fmt_money(x):
+def fmt_int(valor):
     try:
-        return f"$ {float(x):,.0f}".replace(",", ".")
+        return f"{int(round(float(valor), 0)):,}".replace(",", ".")
     except Exception:
-        return "$ 0"
+        return "-"
 
 
-def fmt_int(x):
-    try:
-        return f"{int(round(float(x))):,}".replace(",", ".")
-    except Exception:
-        return "0"
+def normalizar_inventario(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
 
-
-def normalizar_columnas(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip().lower() for c in df.columns]
 
-    rename_map = {
+    renames = {
         "titulo_ecom": "tituloecom",
-        "sku_variante": "skuvariante",
+        "titulo": "tituloecom",
         "costo_fijo": "costofijo",
         "stock_disponible": "stockdisponible",
         "valor_venta_30_dias": "valorventa30dias",
@@ -73,30 +53,9 @@ def normalizar_columnas(df: pd.DataFrame) -> pd.DataFrame:
         "precio_venta_unitario": "precioventaunitario",
         "stock_valorizado": "stockvalorizado",
     }
-    df = df.rename(columns=rename_map)
+    df.rename(columns={k: v for k, v in renames.items() if k in df.columns}, inplace=True)
 
-    esperadas = [
-        "sku",
-        "tituloecom",
-        "skuvariante",
-        "costofijo",
-        "stockdisponible",
-        "valorventa30dias",
-        "undvendidas30dias",
-        "valorventa7dias",
-        "undvendidas7dias",
-        "quiebrestock30dias",
-        "quiebrestock7dias",
-        "precioventaunitario",
-        "stockvalorizado",
-        "vendedor",
-    ]
-
-    for col in esperadas:
-        if col not in df.columns:
-            df[col] = "" if col in ["sku", "tituloecom", "skuvariante", "vendedor"] else 0
-
-    numericas = [
+    numeric_cols = [
         "costofijo",
         "stockdisponible",
         "valorventa30dias",
@@ -109,291 +68,321 @@ def normalizar_columnas(df: pd.DataFrame) -> pd.DataFrame:
         "stockvalorizado",
     ]
 
-    for col in numericas:
-        df[col] = df[col].apply(to_num)
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    df["sku"] = df["sku"].astype(str).str.strip()
-    df["tituloecom"] = df["tituloecom"].astype(str).str.strip()
-    df["skuvariante"] = df["skuvariante"].astype(str).str.strip()
-    df["vendedor"] = df["vendedor"].astype(str).str.strip()
+    if "dias_cobertura_30" not in df.columns:
+        if {"stockdisponible", "undvendidas30dias"}.issubset(df.columns):
+            df["dias_cobertura_30"] = df.apply(
+                lambda r: round(r["stockdisponible"] / (r["undvendidas30dias"] / 30), 1)
+                if r["undvendidas30dias"] > 0 else None,
+                axis=1
+            )
+
+    if "dias_cobertura_7" not in df.columns:
+        if {"stockdisponible", "undvendidas7dias"}.issubset(df.columns):
+            df["dias_cobertura_7"] = df.apply(
+                lambda r: round(r["stockdisponible"] / (r["undvendidas7dias"] / 7), 1)
+                if r["undvendidas7dias"] > 0 else None,
+                axis=1
+            )
+
+    if "rotacion_30" not in df.columns:
+        if {"undvendidas30dias", "stockdisponible"}.issubset(df.columns):
+            df["rotacion_30"] = df.apply(
+                lambda r: round(r["undvendidas30dias"] / r["stockdisponible"], 2)
+                if r["stockdisponible"] > 0 else None,
+                axis=1
+            )
+
+    if "rotacion_7" not in df.columns:
+        if {"undvendidas7dias", "stockdisponible"}.issubset(df.columns):
+            df["rotacion_7"] = df.apply(
+                lambda r: round(r["undvendidas7dias"] / r["stockdisponible"], 2)
+                if r["stockdisponible"] > 0 else None,
+                axis=1
+            )
+
+    if "estado_stock" not in df.columns and "stockdisponible" in df.columns:
+        def clasificar_stock(x):
+            if pd.isna(x):
+                return "Sin dato"
+            if x < 0:
+                return "Stock negativo"
+            if x == 0:
+                return "Sin stock"
+            if x <= 5:
+                return "Stock bajo"
+            return "Con stock"
+        df["estado_stock"] = df["stockdisponible"].apply(clasificar_stock)
 
     return df
 
 
-def aplicar_filtros(df, vendedor, sku_texto, titulo_texto, solo_con_stock):
+def apply_filtros(
+    df: pd.DataFrame,
+    f_vendedor,
+    f_sku,
+    f_titulo,
+    f_variante,
+    f_estado_stock,
+    f_stock_desde,
+    f_stock_hasta,
+    f_solo_quiebre_30,
+    f_solo_quiebre_7,
+):
+    if df.empty:
+        return df
+
     vista = df.copy()
 
-    if vendedor != "Todos":
-        vista = vista[vista["vendedor"] == vendedor]
+    if f_vendedor != "Todos" and "vendedor" in vista.columns:
+        vista = vista[vista["vendedor"] == f_vendedor]
 
-    if sku_texto.strip():
-        patron = sku_texto.strip()
-        vista = vista[
-            vista["sku"].astype(str).str.contains(patron, case=False, na=False)
-            | vista["skuvariante"].astype(str).str.contains(patron, case=False, na=False)
-        ]
+    if f_sku.strip() and "sku" in vista.columns:
+        vista = vista[vista["sku"].astype(str).str.contains(f_sku.strip(), case=False, na=False)]
 
-    if titulo_texto.strip():
-        patron = titulo_texto.strip()
-        vista = vista[vista["tituloecom"].astype(str).str.contains(patron, case=False, na=False)]
+    if f_titulo.strip() and "tituloecom" in vista.columns:
+        vista = vista[vista["tituloecom"].astype(str).str.contains(f_titulo.strip(), case=False, na=False)]
 
-    if solo_con_stock:
-        vista = vista[vista["stockdisponible"] > 0]
+    if f_variante.strip() and "variante" in vista.columns:
+        vista = vista[vista["variante"].astype(str).str.contains(f_variante.strip(), case=False, na=False)]
+
+    if f_estado_stock != "Todos" and "estado_stock" in vista.columns:
+        vista = vista[vista["estado_stock"] == f_estado_stock]
+
+    if "stockdisponible" in vista.columns:
+        vista = vista[vista["stockdisponible"] >= f_stock_desde]
+        if f_stock_hasta is not None:
+            vista = vista[vista["stockdisponible"] <= f_stock_hasta]
+
+    if f_solo_quiebre_30 and "quiebrestock30dias" in vista.columns:
+        vista = vista[vista["quiebrestock30dias"] > 0]
+
+    if f_solo_quiebre_7 and "quiebrestock7dias" in vista.columns:
+        vista = vista[vista["quiebrestock7dias"] > 0]
 
     return vista
 
 
-def preparar_tabla(df):
-    vista = df.copy()
+def mostrar_metricas(df: pd.DataFrame):
+    if df.empty:
+        st.info("No hay datos para mostrar.")
+        return
 
-    vista["cobertura_dias_30"] = vista.apply(
-        lambda r: (r["stockdisponible"] / (r["undvendidas30dias"] / 30)) if r["undvendidas30dias"] > 0 else 9999,
-        axis=1,
-    )
-    vista["cobertura_dias_7"] = vista.apply(
-        lambda r: (r["stockdisponible"] / (r["undvendidas7dias"] / 7)) if r["undvendidas7dias"] > 0 else 9999,
-        axis=1,
-    )
-    vista["rotacion_30"] = vista.apply(
-        lambda r: (r["undvendidas30dias"] / r["stockdisponible"] * 100) if r["stockdisponible"] > 0 else 0,
-        axis=1,
-    )
+    total_skus = len(df)
+    stock_total = float(df["stockdisponible"].sum()) if "stockdisponible" in df.columns else 0
+    stock_valorizado = float(df["stockvalorizado"].sum()) if "stockvalorizado" in df.columns else 0
+    venta_30 = float(df["valorventa30dias"].sum()) if "valorventa30dias" in df.columns else 0
+    venta_7 = float(df["valorventa7dias"].sum()) if "valorventa7dias" in df.columns else 0
+    quiebres_30 = int((df["quiebrestock30dias"] > 0).sum()) if "quiebrestock30dias" in df.columns else 0
+    quiebres_7 = int((df["quiebrestock7dias"] > 0).sum()) if "quiebrestock7dias" in df.columns else 0
 
-    vista["stockdisponible"] = vista["stockdisponible"].round(0)
-    vista["undvendidas30dias"] = vista["undvendidas30dias"].round(0)
-    vista["undvendidas7dias"] = vista["undvendidas7dias"].round(0)
-    vista["quiebrestock30dias"] = vista["quiebrestock30dias"].round(0)
-    vista["quiebrestock7dias"] = vista["quiebrestock7dias"].round(0)
-    vista["costofijo"] = vista["costofijo"].round(2)
-    vista["valorventa30dias"] = vista["valorventa30dias"].round(2)
-    vista["valorventa7dias"] = vista["valorventa7dias"].round(2)
-    vista["precioventaunitario"] = vista["precioventaunitario"].round(2)
-    vista["stockvalorizado"] = vista["stockvalorizado"].round(2)
-    vista["cobertura_dias_30"] = vista["cobertura_dias_30"].replace([float("inf")], 9999).round(1)
-    vista["cobertura_dias_7"] = vista["cobertura_dias_7"].replace([float("inf")], 9999).round(1)
-    vista["rotacion_30"] = vista["rotacion_30"].round(1)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("SKUs", fmt_int(total_skus))
+    c2.metric("Stock total", fmt_int(stock_total))
+    c3.metric("Stock valorizado", fmt_money(stock_valorizado))
+    c4.metric("Venta 30 días", fmt_money(venta_30))
+    c5.metric("Quiebres 30 días", fmt_int(quiebres_30))
+    c6.metric("Quiebres 7 días", fmt_int(quiebres_7))
 
-    return vista
+    c7, c8 = st.columns(2)
+    with c7:
+        st.metric("Venta 7 días", fmt_money(venta_7))
+    with c8:
+        cobertura_media = df["dias_cobertura_30"].dropna().mean() if "dias_cobertura_30" in df.columns else None
+        st.metric("Cobertura media 30 días", "-" if pd.isna(cobertura_media) else f"{cobertura_media:.1f} días")
 
 
-def exportar_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="inventarios")
-    return output.getvalue()
-
-
-# =========================
-# Carga desde SQL
-# =========================
-try:
-    resultados = fetch_all(f"SELECT * FROM {TABLA_INVENTARIOS}")
-except Exception as e:
-    st.error(f"No se pudo consultar la tabla {TABLA_INVENTARIOS}: {e}")
+if not st.session_state.get("authenticated"):
+    st.error("No hay una sesión autenticada.")
     st.stop()
 
-if not resultados:
-    st.warning(f"La tabla {TABLA_INVENTARIOS} no devolvió registros.")
+
+if st.session_state.inv_base.empty:
+    resultados = fetch_all("SELECT * FROM informe_inventarios")
+    if not resultados:
+        resultados = fetch_all("SELECT * FROM rd_informe_inventarios")
+    if not resultados:
+        resultados = fetch_all("SELECT * FROM rd_tabla_inventarios")
+
+    if resultados:
+        df_base = pd.DataFrame(resultados)
+        df_base = normalizar_inventario(df_base)
+        st.session_state.inv_base = df_base.copy()
+        st.session_state.inv_filtrado = df_base.copy()
+    else:
+        st.session_state.inv_base = pd.DataFrame()
+        st.session_state.inv_filtrado = pd.DataFrame()
+
+
+if st.session_state.inv_base.empty:
+    st.warning("No se encontraron datos de inventario en las tablas esperadas.")
     st.stop()
 
-df = pd.DataFrame(resultados)
-df = normalizar_columnas(df)
 
-st.success(f"Datos cargados desde SQL: {len(df)} registros")
+df_base = st.session_state.inv_base.copy()
 
-# =========================
-# Filtros
-# =========================
+vendedores = sorted(df_base["vendedor"].dropna().astype(str).unique().tolist()) if "vendedor" in df_base.columns else []
+estados_stock = sorted(df_base["estado_stock"].dropna().astype(str).unique().tolist()) if "estado_stock" in df_base.columns else []
+
 st.markdown("### Filtros")
 
 col1, col2, col3, col4 = st.columns(4)
-
-vendedores = sorted([x for x in df["vendedor"].dropna().unique().tolist() if str(x).strip()])
-
 with col1:
-    filtro_vendedor = st.selectbox("Vendedor", ["Todos"] + vendedores)
+    f_vendedor = st.selectbox("Vendedor", ["Todos"] + vendedores)
+    f_sku = st.text_input("SKU")
 with col2:
-    filtro_sku = st.text_input("SKU / Variante")
+    f_titulo = st.text_input("Título")
+    f_variante = st.text_input("Variante")
 with col3:
-    filtro_titulo = st.text_input("Título")
+    f_estado_stock = st.selectbox("Estado stock", ["Todos"] + estados_stock)
+    f_stock_desde = st.number_input("Stock mínimo", value=0.0, step=1.0)
 with col4:
-    solo_con_stock = st.checkbox("Solo con stock", value=False)
+    f_stock_hasta_val = st.text_input("Stock máximo", value="")
+    f_solo_quiebre_30 = st.checkbox("Solo con quiebre 30 días")
+    f_solo_quiebre_7 = st.checkbox("Solo con quiebre 7 días")
 
-df_filtrado = aplicar_filtros(
-    df,
-    filtro_vendedor,
-    filtro_sku,
-    filtro_titulo,
-    solo_con_stock,
-)
-
-df_filtrado = preparar_tabla(df_filtrado)
-
-# =========================
-# KPIs
-# =========================
-total_skus = df_filtrado["skuvariante"].nunique() if "skuvariante" in df_filtrado.columns else len(df_filtrado)
-stock_total = df_filtrado["stockdisponible"].sum()
-stock_valorizado = df_filtrado["stockvalorizado"].sum()
-valor_30 = df_filtrado["valorventa30dias"].sum()
-valor_7 = df_filtrado["valorventa7dias"].sum()
-und_30 = df_filtrado["undvendidas30dias"].sum()
-und_7 = df_filtrado["undvendidas7dias"].sum()
-quiebre_30 = df_filtrado["quiebrestock30dias"].sum()
-quiebre_7 = df_filtrado["quiebrestock7dias"].sum()
-
-col_a, col_b, col_c, col_d = st.columns(4)
-col_a.metric("SKU variantes", fmt_int(total_skus))
-col_b.metric("Stock disponible", fmt_int(stock_total))
-col_c.metric("Stock valorizado", fmt_money(stock_valorizado))
-col_d.metric("Venta 30 días", fmt_money(valor_30))
-
-col_e, col_f, col_g, col_h = st.columns(4)
-col_e.metric("Venta 7 días", fmt_money(valor_7))
-col_f.metric("Unidades 30 días", fmt_int(und_30))
-col_g.metric("Unidades 7 días", fmt_int(und_7))
-col_h.metric("Quiebres 30 días", fmt_int(quiebre_30))
-
-st.markdown("---")
-
-# =========================
-# Rankings
-# =========================
-col_r1, col_r2 = st.columns(2)
-
-with col_r1:
-    st.markdown("### Top 10 por venta 30 días")
-    top_venta = (
-        df_filtrado.sort_values("valorventa30dias", ascending=False)[
-            ["skuvariante", "tituloecom", "vendedor", "valorventa30dias", "undvendidas30dias", "stockdisponible"]
-        ]
-        .head(10)
-        .copy()
-    )
-    top_venta["valorventa30dias"] = top_venta["valorventa30dias"].apply(fmt_money)
-    top_venta["undvendidas30dias"] = top_venta["undvendidas30dias"].apply(fmt_int)
-    top_venta["stockdisponible"] = top_venta["stockdisponible"].apply(fmt_int)
-    st.dataframe(top_venta, use_container_width=True, hide_index=True)
-
-with col_r2:
-    st.markdown("### Top 10 quiebres 30 días")
-    top_quiebres = (
-        df_filtrado.sort_values("quiebrestock30dias", ascending=False)[
-            ["skuvariante", "tituloecom", "vendedor", "quiebrestock30dias", "undvendidas30dias", "stockdisponible"]
-        ]
-        .head(10)
-        .copy()
-    )
-    top_quiebres["quiebrestock30dias"] = top_quiebres["quiebrestock30dias"].apply(fmt_int)
-    top_quiebres["undvendidas30dias"] = top_quiebres["undvendidas30dias"].apply(fmt_int)
-    top_quiebres["stockdisponible"] = top_quiebres["stockdisponible"].apply(fmt_int)
-    st.dataframe(top_quiebres, use_container_width=True, hide_index=True)
-
-st.markdown("---")
-
-# =========================
-# Alertas
-# =========================
-st.markdown("### Alertas de cobertura")
-
-alertas = df_filtrado[
-    (
-        (df_filtrado["undvendidas30dias"] > 0) &
-        (df_filtrado["cobertura_dias_30"] <= 15)
-    )
-    |
-    (
-        (df_filtrado["stockdisponible"] <= 0) &
-        (df_filtrado["undvendidas30dias"] > 0)
-    )
-].copy()
-
-alertas = alertas.sort_values(["cobertura_dias_30", "valorventa30dias"], ascending=[True, False])
-
-if alertas.empty:
-    st.success("No hay alertas críticas con los filtros actuales.")
-else:
-    alertas_show = alertas[
+colf1, colf2 = st.columns([1, 2])
+with colf1:
+    btn_filtrar = st.button("Aplicar filtros", use_container_width=True)
+with colf2:
+    orden = st.selectbox(
+        "Ordenar por",
         [
-            "skuvariante",
-            "tituloecom",
-            "vendedor",
+            "stockvalorizado",
+            "valorventa30dias",
+            "valorventa7dias",
             "stockdisponible",
             "undvendidas30dias",
-            "valorventa30dias",
+            "undvendidas7dias",
             "quiebrestock30dias",
-            "cobertura_dias_30",
-        ]
-    ].copy()
+            "quiebrestock7dias",
+        ],
+        index=0,
+    )
 
-    alertas_show["stockdisponible"] = alertas_show["stockdisponible"].apply(fmt_int)
-    alertas_show["undvendidas30dias"] = alertas_show["undvendidas30dias"].apply(fmt_int)
-    alertas_show["valorventa30dias"] = alertas_show["valorventa30dias"].apply(fmt_money)
-    alertas_show["quiebrestock30dias"] = alertas_show["quiebrestock30dias"].apply(fmt_int)
+desc = st.toggle("Orden descendente", value=True)
 
-    st.dataframe(alertas_show, use_container_width=True, hide_index=True)
+f_stock_hasta = None
+if str(f_stock_hasta_val).strip():
+    try:
+        f_stock_hasta = float(f_stock_hasta_val)
+    except Exception:
+        st.warning("Stock máximo inválido. Se ignorará ese filtro.")
+
+
+if btn_filtrar:
+    df_filtrado = apply_filtros(
+        df_base,
+        f_vendedor,
+        f_sku,
+        f_titulo,
+        f_variante,
+        f_estado_stock,
+        f_stock_desde,
+        f_stock_hasta,
+        f_solo_quiebre_30,
+        f_solo_quiebre_7,
+    )
+
+    if orden in df_filtrado.columns:
+        df_filtrado = df_filtrado.sort_values(by=orden, ascending=not desc, na_position="last")
+
+    st.session_state.inv_filtrado = df_filtrado.copy()
+
+
+df_vista = st.session_state.inv_filtrado.copy()
+
+mostrar_metricas(df_vista)
+st.markdown("---")
+st.markdown(f"**{len(df_vista)} registros en la vista**")
+
+df_show = df_vista.copy()
+
+money_cols = [
+    "costofijo",
+    "valorventa30dias",
+    "valorventa7dias",
+    "precioventaunitario",
+    "stockvalorizado",
+]
+int_like_cols = [
+    "stockdisponible",
+    "undvendidas30dias",
+    "undvendidas7dias",
+    "quiebrestock30dias",
+    "quiebrestock7dias",
+]
+
+for col in money_cols:
+    if col in df_show.columns:
+        df_show[col] = df_show[col].apply(fmt_money)
+
+for col in int_like_cols:
+    if col in df_show.columns:
+        df_show[col] = df_show[col].apply(fmt_int)
+
+if "dias_cobertura_30" in df_show.columns:
+    df_show["dias_cobertura_30"] = df_show["dias_cobertura_30"].apply(
+        lambda x: "-" if pd.isna(x) else f"{float(x):.1f}"
+    )
+
+if "dias_cobertura_7" in df_show.columns:
+    df_show["dias_cobertura_7"] = df_show["dias_cobertura_7"].apply(
+        lambda x: "-" if pd.isna(x) else f"{float(x):.1f}"
+    )
+
+if "rotacion_30" in df_show.columns:
+    df_show["rotacion_30"] = df_show["rotacion_30"].apply(
+        lambda x: "-" if pd.isna(x) else f"{float(x):.2f}"
+    )
+
+if "rotacion_7" in df_show.columns:
+    df_show["rotacion_7"] = df_show["rotacion_7"].apply(
+        lambda x: "-" if pd.isna(x) else f"{float(x):.2f}"
+    )
+
+columnas_preferidas = [
+    "vendedor",
+    "tituloecom",
+    "sku",
+    "variante",
+    "estado_stock",
+    "stockdisponible",
+    "costofijo",
+    "precioventaunitario",
+    "stockvalorizado",
+    "valorventa30dias",
+    "undvendidas30dias",
+    "valorventa7dias",
+    "undvendidas7dias",
+    "quiebrestock30dias",
+    "quiebrestock7dias",
+    "dias_cobertura_30",
+    "dias_cobertura_7",
+    "rotacion_30",
+    "rotacion_7",
+]
+
+columnas_finales = [c for c in columnas_preferidas if c in df_show.columns] + [
+    c for c in df_show.columns if c not in columnas_preferidas
+]
+
+st.dataframe(
+    df_show[columnas_finales],
+    use_container_width=True,
+    height=650,
+)
 
 st.markdown("---")
 
-# =========================
-# Tabla principal
-# =========================
-st.markdown(f"### Detalle ({len(df_filtrado)} filas)")
-
-tabla = df_filtrado[
-    [
-        "sku",
-        "tituloecom",
-        "skuvariante",
-        "vendedor",
-        "costofijo",
-        "precioventaunitario",
-        "stockdisponible",
-        "stockvalorizado",
-        "valorventa30dias",
-        "undvendidas30dias",
-        "valorventa7dias",
-        "undvendidas7dias",
-        "quiebrestock30dias",
-        "quiebrestock7dias",
-        "cobertura_dias_30",
-        "cobertura_dias_7",
-        "rotacion_30",
-    ]
-].copy()
-
-st.dataframe(
-    tabla,
-    use_container_width=True,
-    hide_index=True,
-    height=520,
-    column_config={
-        "sku": st.column_config.TextColumn("SKU", width="medium"),
-        "tituloecom": st.column_config.TextColumn("Título", width="large"),
-        "skuvariante": st.column_config.TextColumn("SKU variante", width="medium"),
-        "vendedor": st.column_config.TextColumn("Vendedor", width="medium"),
-        "costofijo": st.column_config.NumberColumn("Costo fijo", format="$ %.2f"),
-        "precioventaunitario": st.column_config.NumberColumn("Precio venta", format="$ %.2f"),
-        "stockdisponible": st.column_config.NumberColumn("Stock", format="%.0f"),
-        "stockvalorizado": st.column_config.NumberColumn("Stock valorizado", format="$ %.2f"),
-        "valorventa30dias": st.column_config.NumberColumn("Venta 30d", format="$ %.2f"),
-        "undvendidas30dias": st.column_config.NumberColumn("Und 30d", format="%.0f"),
-        "valorventa7dias": st.column_config.NumberColumn("Venta 7d", format="$ %.2f"),
-        "undvendidas7dias": st.column_config.NumberColumn("Und 7d", format="%.0f"),
-        "quiebrestock30dias": st.column_config.NumberColumn("Quiebres 30d", format="%.0f"),
-        "quiebrestock7dias": st.column_config.NumberColumn("Quiebres 7d", format="%.0f"),
-        "cobertura_dias_30": st.column_config.NumberColumn("Cobertura 30d", format="%.1f"),
-        "cobertura_dias_7": st.column_config.NumberColumn("Cobertura 7d", format="%.1f"),
-        "rotacion_30": st.column_config.NumberColumn("Rotación 30d %", format="%.1f"),
-    },
-)
-
-excel_bytes = exportar_excel(tabla)
-
+csv_export = df_vista.to_csv(index=False).encode("utf-8")
 st.download_button(
-    "Descargar Excel",
-    data=excel_bytes,
-    file_name="informe_inventarios.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "Descargar CSV filtrado",
+    data=csv_export,
+    file_name="informe_inventarios_filtrado.csv",
+    mime="text/csv",
     use_container_width=True,
 )
