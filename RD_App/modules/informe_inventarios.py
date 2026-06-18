@@ -13,12 +13,18 @@ st.set_page_config(
 st.markdown("""
 <style>
 .block-container {
-    padding-top: 1.2rem;
+    padding-top: 1.15rem;
     padding-bottom: 2rem;
+    max-width: 96%;
+}
+
+div[data-testid="stVerticalBlock"] > div:has(> div.anchor) {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
 }
 
 .inv-card {
-    background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+    background: linear-gradient(135deg, #0f1b31 0%, #182842 100%);
     border: 1px solid rgba(255,255,255,.08);
     border-radius: 18px;
     padding: 16px 18px;
@@ -47,29 +53,45 @@ st.markdown("""
 }
 
 .filter-box {
-    background: linear-gradient(180deg, #081120 0%, #0f172a 100%);
+    background: linear-gradient(180deg, #081120 0%, #0b1424 100%);
     border: 1px solid rgba(255,255,255,.08);
     border-radius: 18px;
-    padding: 20px;
-    margin-bottom: 22px;
+    padding: 20px 20px 18px 20px;
+    margin-bottom: 24px;
     box-shadow: 0 10px 30px rgba(0,0,0,.14);
 }
 
-.visual-btn {
+.filter-box .stTextInput,
+.filter-box .stSelectbox {
+    margin-bottom: 0 !important;
+}
+
+.filter-actions {
+    margin-top: 16px;
+}
+
+.visual-btn,
+.visual-btn .stButton,
+.visual-btn .stDownloadButton {
     width: 100%;
 }
 
 .visual-btn .stButton > button,
 .visual-btn .stDownloadButton > button {
     width: 100%;
-    min-height: 46px;
-    height: 46px;
+    min-height: 50px;
+    height: 50px;
     border-radius: 14px;
-    border: 1px solid rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.10);
     color: white;
     font-weight: 700;
     font-size: 0.95rem;
-    padding: 0 16px;
+    padding: 0 18px;
+    margin-top: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
 }
 
 .visual-btn .stButton > button {
@@ -87,10 +109,23 @@ st.markdown("""
     box-shadow: 0 10px 20px rgba(5,150,105,.22);
 }
 
+.visual-btn .stButton > button:hover,
+.visual-btn .stDownloadButton > button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(255,255,255,.18);
+}
+
 div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div {
-    min-height: 46px;
+    min-height: 50px;
     border-radius: 14px !important;
+    background: rgba(255,255,255,.03) !important;
+}
+
+label[data-testid="stWidgetLabel"] p {
+    font-size: 0.88rem !important;
+    font-weight: 600 !important;
+    color: #dbe4f0 !important;
 }
 
 .status-chip {
@@ -122,15 +157,31 @@ div[data-baseweb="input"] > div {
 }
 
 .section-title {
-    font-size: 1.1rem;
+    font-size: 1.08rem;
     font-weight: 800;
-    margin: .1rem 0 1rem 0;
+    margin: 0 0 1rem 0;
+    color: #f8fafc;
+}
+
+.source-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(59,130,246,.18);
+    background: rgba(37,99,235,.08);
+    color: #c7d2fe;
+    font-size: .84rem;
+    margin-bottom: 14px;
+}
+
+div[data-testid="stHorizontalBlock"] {
+    gap: 0.9rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("Informe de inventarios")
-st.caption("Fuente: PostgreSQL | tabla rd_tabla_inventarios")
 
 for key, default in [
     ("inv_base", pd.DataFrame()),
@@ -240,6 +291,7 @@ col_quiebre_30 = find_col(df_base, ["quiebre_stock_30_dias", "quiebrestock30dias
 
 with st.container():
     st.markdown('<div class="filter-box">', unsafe_allow_html=True)
+    st.markdown('<div class="source-chip">Fuente: PostgreSQL | tabla rd_tabla_inventarios</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
 
     f1, f2, f3, f4 = st.columns(4)
@@ -261,6 +313,7 @@ with st.container():
     csv_buffer = io.BytesIO()
     st.session_state.inv_filtrado.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
 
+    st.markdown('<div class="filter-actions">', unsafe_allow_html=True)
     b1, b2, b3 = st.columns(3)
     with b1:
         st.markdown('<div class="visual-btn">', unsafe_allow_html=True)
@@ -282,6 +335,7 @@ with st.container():
             use_container_width=True,
         )
         st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
