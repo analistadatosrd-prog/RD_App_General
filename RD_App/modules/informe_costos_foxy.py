@@ -8,6 +8,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 GRAPHQL_URL = "https://api.ecomexperts.com/graphql"
+ACCOUNT_ID_OBJETIVO = "33920"
 TIMEOUT = (20, 90)
 PAGE_DELAY = 0.05
 
