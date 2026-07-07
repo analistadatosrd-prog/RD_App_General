@@ -3,6 +3,7 @@ import time
 from io import BytesIO
 
 import pandas as pd
+import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -121,8 +122,8 @@ def fetch_ml_listings_fast(session, status_callback=None):
                         "account_id": account_id,
                         "product_id": str(item.get("productId", "") or ""),
                         "product_variant_id": str(item.get("productVariantId", "") or ""),
-                        "sku": str(product.get("sku", "") or ""),
-                        "titulo_producto_base": str(product.get("title", "") or ""),
+                        "sku": str(product.get("sku", "") or "").strip(),
+                        "titulo_producto_base": str(product.get("title", "") or "").strip(),
                         "unidades": pd.to_numeric(item.get("qty"), errors="coerce"),
                     }
                 )
@@ -131,7 +132,28 @@ def fetch_ml_listings_fast(session, status_callback=None):
         if PAGE_DELAY:
             time.sleep(PAGE_DELAY)
 
-    return pd.DataFrame(all_rows)
+    df = pd.DataFrame(all_rows)
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "cuenta",
+                "mla",
+                "owner",
+                "account_id",
+                "product_id",
+                "product_variant_id",
+                "sku",
+                "titulo_producto_base",
+                "unidades",
+            ]
+        )
+
+    df["sku"] = df["sku"].astype(str).str.strip()
+    df["mla"] = df["mla"].astype(str).str.strip()
+    df["cuenta"] = df["cuenta"].astype(str).str.strip()
+    df["unidades"] = pd.to_numeric(df["unidades"], errors="coerce")
+
+    return df
 
 
 def fetch_products_fast(session, status_callback=None):
@@ -166,8 +188,8 @@ def fetch_products_fast(session, status_callback=None):
             break
 
         for product in products:
-            product_sku = str(product.get("sku", "") or "")
-            product_title = str(product.get("title", "") or "")
+            product_sku = str(product.get("sku", "") or "").strip()
+            product_title = str(product.get("title", "") or "").strip()
             product_tax = product.get("tax", None)
 
             tax_value = None
@@ -204,7 +226,8 @@ def fetch_products_fast(session, status_callback=None):
     if df.empty:
         return pd.DataFrame(columns=["sku", "titulo_catalogo", "costo_unitario", "iva"])
 
-    df["sku"] = df["sku"].astype(str)
+    df["sku"] = df["sku"].astype(str).str.strip()
+
     return (
         df.groupby("sku", as_index=False)
         .agg(
@@ -257,15 +280,15 @@ def build_outputs(df_listings, df_products, status_callback=None):
         return detalle, final_df
 
     if status_callback:
-        status_callback("Agrupando detalle por cuenta + MLA + SKU...")
+        status_callback("Depurando SKUs duplicados por cuenta + MLA + SKU (qty máximo)...")
 
     detalle = (
         df_listings.groupby(["cuenta", "mla", "sku"], as_index=False)
         .agg(
             {
-                "unidades": "sum",
+                "unidades": "max",
                 "titulo_producto_base": lambda s: " | ".join(
-                    sorted(set([str(x) for x in s if str(x).strip()]))
+                    sorted(set([str(x).strip() for x in s if str(x).strip()]))
                 ),
                 "owner": "first",
                 "account_id": "first",
@@ -274,15 +297,17 @@ def build_outputs(df_listings, df_products, status_callback=None):
     )
 
     if status_callback:
-        status_callback("Cruzando con catálogo de productos...")
+        status_callback("Cruzando SKUs únicos contra catálogo de costos...")
 
     detalle = detalle.merge(df_products, on="sku", how="left")
     detalle["costo_unitario"] = pd.to_numeric(detalle["costo_unitario"], errors="coerce").fillna(0)
     detalle["iva"] = pd.to_numeric(detalle["iva"], errors="coerce")
     detalle["unidades"] = pd.to_numeric(detalle["unidades"], errors="coerce").fillna(0)
+
     detalle["titulo_final"] = (
         detalle["titulo_producto_base"].replace("", pd.NA).fillna(detalle["titulo_catalogo"])
     )
+
     detalle["costo_total_sku"] = detalle["costo_unitario"] * detalle["unidades"]
 
     detalle = (
@@ -310,11 +335,11 @@ def build_outputs(df_listings, df_products, status_callback=None):
         .agg(
             titulo_producto=(
                 "titulo_final",
-                lambda s: " | ".join(sorted(set([str(x) for x in s if str(x).strip()])))
+                lambda s: " | ".join(sorted(set([str(x).strip() for x in s if str(x).strip()])))
             ),
             skus_asociados=(
                 "sku",
-                lambda s: " | ".join(sorted(set([str(x) for x in s if str(x).strip()])))
+                lambda s: " | ".join(sorted(set([str(x).strip() for x in s if str(x).strip()])))
             ),
             unidades_totales=("unidades", "sum"),
             costo_total_mla=("costo_total_sku", "sum"),
@@ -451,6 +476,7 @@ if session is None:
 session = ensure_session_ready(session)
 
 col1, col2 = st.columns([1, 3])
+
 with col1:
     consultar = st.button("Consultar datos", type="primary", use_container_width=True)
 
