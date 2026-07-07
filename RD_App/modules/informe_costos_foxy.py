@@ -8,9 +8,15 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 GRAPHQL_URL = "https://api.ecomexperts.com/graphql"
-ACCOUNT_ID_OBJETIVO = "33833"
 TIMEOUT = (20, 90)
 PAGE_DELAY = 0.05
+
+ACCOUNT_ID_CUENTAS = {
+    "33833": "rd_argentina",
+    "33526": "insuoffice",
+    "34398": "tucocina_tufarmacia",
+    "33920": "lalu_modernpinup",
+}
 
 COMMON_HEADERS = {
     "Content-Type": "application/json",
@@ -98,15 +104,18 @@ def fetch_ml_listings_fast(session, status_callback=None):
 
         for listing in listings:
             account_id = str(listing.get("accountId", "") or "")
-            if account_id != ACCOUNT_ID_OBJETIVO:
+            if account_id not in ACCOUNT_ID_CUENTAS:
                 continue
 
             owner = str(listing.get("owner", "") or "")
             mla = str(listing.get("ownerId", "") or "")
+            cuenta = ACCOUNT_ID_CUENTAS.get(account_id, "sin_clasificar")
+
             for item in listing.get("productListings") or []:
                 product = item.get("product") or {}
                 all_rows.append(
                     {
+                        "cuenta": cuenta,
                         "mla": mla,
                         "owner": owner,
                         "account_id": account_id,
@@ -222,6 +231,7 @@ def build_outputs(df_listings, df_products, status_callback=None):
     if df_listings.empty:
         detalle = pd.DataFrame(
             columns=[
+                "cuenta",
                 "mla",
                 "sku",
                 "unidades",
@@ -233,6 +243,7 @@ def build_outputs(df_listings, df_products, status_callback=None):
         )
         final_df = pd.DataFrame(
             columns=[
+                "cuenta",
                 "mla",
                 "titulo_producto",
                 "skus_asociados",
@@ -246,10 +257,10 @@ def build_outputs(df_listings, df_products, status_callback=None):
         return detalle, final_df
 
     if status_callback:
-        status_callback("Agrupando detalle por MLA + SKU...")
+        status_callback("Agrupando detalle por cuenta + MLA + SKU...")
 
     detalle = (
-        df_listings.groupby(["mla", "sku"], as_index=False)
+        df_listings.groupby(["cuenta", "mla", "sku"], as_index=False)
         .agg(
             {
                 "unidades": "sum",
@@ -277,6 +288,7 @@ def build_outputs(df_listings, df_products, status_callback=None):
     detalle = (
         detalle[
             [
+                "cuenta",
                 "mla",
                 "sku",
                 "unidades",
@@ -286,15 +298,15 @@ def build_outputs(df_listings, df_products, status_callback=None):
                 "titulo_final",
             ]
         ]
-        .sort_values(["mla", "sku"])
+        .sort_values(["cuenta", "mla", "sku"])
         .reset_index(drop=True)
     )
 
     if status_callback:
-        status_callback("Construyendo resumen final por MLA...")
+        status_callback("Construyendo resumen final por cuenta + MLA...")
 
     final_df = (
-        detalle.groupby("mla", as_index=False)
+        detalle.groupby(["cuenta", "mla"], as_index=False)
         .agg(
             titulo_producto=(
                 "titulo_final",
@@ -318,6 +330,7 @@ def build_outputs(df_listings, df_products, status_callback=None):
     final_df = (
         final_df[
             [
+                "cuenta",
                 "mla",
                 "titulo_producto",
                 "skus_asociados",
@@ -328,7 +341,7 @@ def build_outputs(df_listings, df_products, status_callback=None):
                 "tipo_producto",
             ]
         ]
-        .sort_values(["tipo_producto", "mla"])
+        .sort_values(["cuenta", "tipo_producto", "mla"])
         .reset_index(drop=True)
     )
 
