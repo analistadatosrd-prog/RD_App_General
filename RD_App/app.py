@@ -50,6 +50,11 @@ def build_navigation():
             title="Simulador ROI",
             icon="🧮",
         ),
+        st.Page(
+            "modules/reporte_cambios.py",
+            title="Reporte de Cambios",
+            icon="📝",
+        ),
     ]
 
 
