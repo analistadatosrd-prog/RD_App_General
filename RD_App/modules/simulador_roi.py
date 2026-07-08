@@ -348,7 +348,7 @@ def mostrar_comparativo(producto, sim, nombre_campania=""):
             st.error(f"📉 Variación % Rentabilidad: {diff_pct:.2f}%")
 
 
-def apply_filtros(df, f_ml_id, f_titulo, f_sku, f_ml_sinc, f_estado, f_tipo, f_logistica, f_envio):
+def apply_filtros(df, f_ml_id, f_titulo, f_sku, f_ml_sinc, f_estado, f_tipo, f_logistica, f_envio, f_cuenta):
     if df.empty:
         return df
 
@@ -376,6 +376,9 @@ def apply_filtros(df, f_ml_id, f_titulo, f_sku, f_ml_sinc, f_estado, f_tipo, f_l
 
     if f_logistica != "Todas" and "logistica" in vista.columns:
         vista = vista[vista["logistica"] == f_logistica]
+
+    if f_cuenta != "Todas" and "cuenta" in vista.columns:
+        vista = vista[vista["cuenta"] == f_cuenta]
 
     if f_envio == "Si" and "envio_gratis" in vista.columns:
         vista = vista[vista["envio_gratis"] == True]
@@ -415,7 +418,8 @@ opciones = fetch_all(
     SELECT
         array_agg(DISTINCT estado_meli) AS estados,
         array_agg(DISTINCT logistica) AS logisticas,
-        array_agg(DISTINCT tipo_publicacion) AS tipos
+        array_agg(DISTINCT tipo_publicacion) AS tipos,
+        array_agg(DISTINCT cuenta) AS cuentas
     FROM rd_tabla_rentas
     WHERE estado_meli IS NOT NULL
     """
@@ -424,6 +428,7 @@ opciones = fetch_all(
 estados = sorted([x for x in (opciones[0]["estados"] or []) if x]) if opciones else []
 logisticas = sorted([x for x in (opciones[0]["logisticas"] or []) if x]) if opciones else []
 tipos = sorted([x for x in (opciones[0]["tipos"] or []) if x]) if opciones else []
+cuentas = sorted([x for x in (opciones[0]["cuentas"] or []) if x]) if opciones else []
 
 col_consultar, _ = st.columns([1, 3])
 with col_consultar:
@@ -491,7 +496,7 @@ if btn_consultar:
 st.markdown("### Filtros")
 st.caption("Puedes usar los datos actuales de Postgres o actualizar costos desde Ecom.")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
     f_ml_id = st.text_input("ML ID")
     f_titulo = st.text_input("Título")
@@ -504,6 +509,8 @@ with col3:
 with col4:
     f_logistica = st.selectbox("Logística", ["Todas"] + logisticas)
     f_envio = st.selectbox("Envío gratis", ["Todos", "Si", "No"])
+with col5:
+    f_cuenta = st.selectbox("Cuenta", ["Todas"] + cuentas)
 
 col_filt, col_lim = st.columns([1, 2])
 with col_filt:
@@ -529,6 +536,7 @@ if btn_filtrar:
             f_tipo,
             f_logistica,
             f_envio,
+            f_cuenta,
         )
         if limite:
             df_vista = df_vista.head(limite)
@@ -582,6 +590,7 @@ st.dataframe(
         "logistica": st.column_config.TextColumn("Logística", width="medium"),
         "envio_gratis": st.column_config.TextColumn("Envío Gratis", width="small"),
         "campaign_ofrecida": st.column_config.TextColumn("Campaign", width="medium"),
+        "cuenta": st.column_config.TextColumn("Cuenta", width="medium"),
         "rango_peso_facturable": st.column_config.TextColumn("Rango Peso", width="medium"),
         "rango_valor_costo_envio": st.column_config.TextColumn("Rango Envío", width="medium"),
         "rango_valor_costo_und_vendida": st.column_config.TextColumn("Rango Und", width="medium"),
