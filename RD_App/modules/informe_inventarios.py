@@ -447,7 +447,7 @@ if aplicar:
 df_vista = st.session_state.inv_filtrado.copy()
 
 st.markdown("### Tabla")
-st.caption("La tabla se muestra tal cual viene desde SQL, solo filtrada.")
+st.caption("tabla resumen")
 
 columnas_ocultar = [
     "dias_cobertura",
