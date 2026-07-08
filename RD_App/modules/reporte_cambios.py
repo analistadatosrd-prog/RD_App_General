@@ -20,7 +20,7 @@ with st.container(border=True):
             "registrar cambios operativos o comerciales y comparar el desempeño antes y después de cada ajuste."
         )
         st.info(
-            "Por ahora, la página ya está creada y lista para que empecemos a construir la lógica del módulo.",
+            "en desarrollo",
             icon="ℹ️",
         )
 
