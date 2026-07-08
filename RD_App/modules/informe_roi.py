@@ -27,6 +27,7 @@ def init_state():
         "roi_f_estado_meli": "Todos",
         "roi_f_relacion_catalogo_tradicional": "Todos",
         "roi_f_tipo_oferta": "Todos",
+        "roi_f_cuenta": "Todos",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -62,6 +63,7 @@ def aplicar_filtros():
     f_estado = st.session_state.roi_f_estado_meli
     f_relacion = st.session_state.roi_f_relacion_catalogo_tradicional
     f_tipo = st.session_state.roi_f_tipo_oferta
+    f_cuenta = st.session_state.roi_f_cuenta
 
     if f_ml_id and "ml_id" in df.columns:
         df = df[df["ml_id"].astype(str).str.contains(f_ml_id, case=False, na=False)]
@@ -83,6 +85,9 @@ def aplicar_filtros():
 
     if f_tipo != "Todos" and "tipo_oferta" in df.columns:
         df = df[df["tipo_oferta"].astype(str) == f_tipo]
+
+    if f_cuenta != "Todos" and "cuenta" in df.columns:
+        df = df[df["cuenta"].astype(str) == f_cuenta]
 
     st.session_state.roi_df_vista = df.copy()
 
@@ -116,6 +121,7 @@ def limpiar_filtros():
     st.session_state.roi_f_estado_meli = "Todos"
     st.session_state.roi_f_relacion_catalogo_tradicional = "Todos"
     st.session_state.roi_f_tipo_oferta = "Todos"
+    st.session_state.roi_f_cuenta = "Todos"
     aplicar_filtros()
 
 
@@ -134,6 +140,7 @@ if df_base.empty:
 estado_opts = options_from_column(df_base, "estado_meli")
 relacion_opts = options_from_column(df_base, "relacion_catalogo_tradicional")
 tipo_opts = options_from_column(df_base, "tipo_oferta")
+cuenta_opts = options_from_column(df_base, "cuenta")
 
 with st.container(border=True):
     st.markdown("### Filtros")
@@ -168,7 +175,7 @@ with st.container(border=True):
             on_change=aplicar_filtros,
         )
 
-    d1, d2, d3, d4 = st.columns([1, 1, 1, 1.2])
+    d1, d2, d3, d4, d5 = st.columns([1, 1, 1, 1, 1.2])
     with d1:
         st.selectbox(
             "Estado Meli",
@@ -191,6 +198,13 @@ with st.container(border=True):
             on_change=aplicar_filtros,
         )
     with d4:
+        st.selectbox(
+            "Cuenta",
+            options=cuenta_opts,
+            key="roi_f_cuenta",
+            on_change=aplicar_filtros,
+        )
+    with d5:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Limpiar filtros", use_container_width=True):
             limpiar_filtros()
