@@ -55,6 +55,6 @@ with col3:
 
 st.markdown("---")
 st.warning(
-    "Este módulo aún no tiene lógica funcional ni conexión a datos. Se encuentra preparado como base visual.",
+    "Este módulo aún se encuentra en desarrollo",
     icon="⚠️",
 )
