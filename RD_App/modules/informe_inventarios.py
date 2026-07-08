@@ -306,7 +306,7 @@ st.markdown(
 
 df_base = st.session_state.inv_base.copy()
 
-col_vendedor = find_col(df_base, ["vendedor"])
+col_cuenta = find_col(df_base, ["cuenta"])
 col_sku = find_col(df_base, ["sku"])
 col_titulo = find_col(df_base, ["titulo", "titulo_ecom", "tituloecom"])
 col_sku_variante = find_col(df_base, ["sku_variante", "skuvariante"])
@@ -379,10 +379,10 @@ with st.container():
 
     f1, f2, f3, f4 = st.columns(4)
     with f1:
-        vendedores = ["Todos"]
-        if col_vendedor:
-            vendedores += sorted(df_base[col_vendedor].dropna().astype(str).unique().tolist())
-        filtro_vendedor = st.selectbox("Vendedor", vendedores)
+        cuentaes = ["Todos"]
+        if col_cuenta:
+            cuentaes += sorted(df_base[col_cuenta].dropna().astype(str).unique().tolist())
+        filtro_cuenta = st.selectbox("cuenta", cuentaes)
 
     with f2:
         filtro_sku = st.text_input("SKU")
@@ -429,8 +429,8 @@ if limpiar:
 if aplicar:
     vista = df_base.copy()
 
-    if col_vendedor and filtro_vendedor != "Todos":
-        vista = vista[vista[col_vendedor].astype(str) == str(filtro_vendedor)]
+    if col_cuenta and filtro_cuenta != "Todos":
+        vista = vista[vista[col_cuenta].astype(str) == str(filtro_cuenta)]
 
     if col_sku and filtro_sku.strip():
         vista = vista[vista[col_sku].astype(str).str.contains(filtro_sku.strip(), case=False, na=False)]
