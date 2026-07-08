@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("Informe ROI")
-st.caption("Visor de la tabla rd_tabla_rentas_ideales con filtros y exportación.")
+st.caption("Visor de precios idelaes sugeridos")
 st.markdown("---")
 
 
