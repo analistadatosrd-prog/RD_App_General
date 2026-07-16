@@ -71,10 +71,12 @@ COLUMNAS_TABLA = [
     "ventas_organicas_resultado",
 ]
 
-KPI_DETALLE = [
+METRICAS_GENERALES = [
     ("clicks", "Clicks", "num"),
     ("impresiones", "Impresiones", "num"),
     ("inversion", "Inversión", "money"),
+    ("ingresos_directos", "Ingresos Directos", "money"),
+    ("ingresos_indirectos", "Ingresos Indirectos", "money"),
     ("ingresos_ads", "Ingresos Ads", "money"),
     ("ingresos_totales", "Ingresos Totales", "money"),
     ("ventas_directas", "Ventas Directas", "num"),
@@ -83,10 +85,10 @@ KPI_DETALLE = [
     ("ventas_organicas", "Ventas Orgánicas", "num"),
 ]
 
-KPI_CATEGORIA = [
-    ("ctr", "CTR", "pct", "ctr_categoria"),
-    ("cvr", "CVR", "pct", "cvr_categoria"),
-    ("acos", "ACOS", "pct", "acos_categoria"),
+KPI_COMPARACION = [
+    ("ctr", "CTR", "pct"),
+    ("cvr", "CVR", "pct"),
+    ("acos", "ACOS", "pct"),
 ]
 
 
@@ -104,6 +106,7 @@ def init_state():
         "rc_f_campaign_ads": "Todas",
         "rc_f_estado_ads": "Todas",
         "rc_f_categoria": "Todas",
+        "rc_limite_vista": 5,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -236,11 +239,26 @@ def limpiar_filtros():
     aplicar_filtros()
 
 
+def calcular_ventas_totales(df: pd.DataFrame):
+    df = df.copy()
+    if "ventas_publicidad" not in df.columns:
+        df["ventas_publicidad"] = 0
+    if "ventas_organicas" not in df.columns:
+        df["ventas_organicas"] = 0
+    df["ventas_totales_calc"] = (
+        pd.to_numeric(df["ventas_publicidad"], errors="coerce").fillna(0)
+        + pd.to_numeric(df["ventas_organicas"], errors="coerce").fillna(0)
+    )
+    return df
+
+
 def agrupador_publicaciones(df: pd.DataFrame):
     if df.empty:
         return df
 
     df = df.copy()
+    df = calcular_ventas_totales(df)
+
     if "fecha" in df.columns:
         df["fecha_sort"] = pd.to_datetime(df["fecha"], errors="coerce")
     else:
@@ -251,6 +269,21 @@ def agrupador_publicaciones(df: pd.DataFrame):
         .groupby("id", as_index=False)
         .first()
     )
+
+    base["logistica_sort"] = (
+        base.get("logistica", pd.Series([""] * len(base)))
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .eq("fulfillment")
+        .astype(int)
+    )
+
+    base = base.sort_values(
+        by=["logistica_sort", "ventas_totales_calc", "fecha_sort"],
+        ascending=[False, False, False]
+    ).reset_index(drop=True)
+
     return base
 
 
@@ -322,9 +355,7 @@ def convert_df_to_excel(df: pd.DataFrame):
 
 
 def mostrar_resumen_publicacion(row: pd.Series):
-    ventas_ads = safe_float(row.get("ventas_publicidad"))
-    ventas_org = safe_float(row.get("ventas_organicas"))
-    total_ventas = ventas_ads + ventas_org
+    total_ventas = safe_float(row.get("ventas_totales_calc"))
 
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns([0.6, 1.1, 4.5, 2.2])
@@ -342,68 +373,15 @@ def mostrar_resumen_publicacion(row: pd.Series):
         with c3:
             st.markdown(f"**{row.get('titulo_meli', '')}**")
             st.caption(f"ID: {row.get('id', '')} | SKU: {row.get('sku', '')}")
-            st.caption(f"Cuenta: {row.get('cuenta', '')} | Estado: {row.get('estado_publicacion', '')}")
+            st.caption(f"Cuenta: {row.get('cuenta', '')} | Estado: {row.get('estado_publicacion', '')} | Logística: {row.get('logistica', '')}")
             if row.get("enlace_meli"):
                 st.link_button("Abrir publicación", row.get("enlace_meli"), use_container_width=False)
 
         with c4:
             a1, a2, a3 = st.columns(3)
-            a1.metric("Ventas Ads", fmt_num(ventas_ads, 0))
-            a2.metric("Ventas Orgánicas", fmt_num(ventas_org, 0))
-            a3.metric("Total", fmt_num(total_ventas, 0))
-
-
-def render_kpi_group(registro: pd.Series, specs, title, suffix=""):
-    with st.container(border=True):
-        st.markdown(f"#### {title}")
-        for key, label, vtype in specs:
-            col_name = f"{key}{suffix}"
-            st.metric(label, fmt_by_type(registro.get(col_name), vtype))
-
-
-def render_categoria_group(registro: pd.Series):
-    with st.container(border=True):
-        st.markdown("#### KPIs categoría")
-        for key, label, _, categoria_col in KPI_CATEGORIA:
-            st.metric(label, fmt_pct(registro.get(categoria_col)))
-
-
-def render_resultado_group(registro: pd.Series):
-    with st.container(border=True):
-        st.markdown("#### KPIs resultado")
-        for key, label, vtype in KPI_DETALLE:
-            col_name = f"{key}_resultado"
-            st.metric(label, fmt_by_type(registro.get(col_name), vtype))
-
-
-def render_diff_base_vs_categoria(registro: pd.Series):
-    with st.container(border=True):
-        st.markdown("#### Diferencias %")
-        for key, label, _, categoria_col in KPI_CATEGORIA:
-            base_val = registro.get(categoria_col)
-            pub_val = registro.get(key)
-            delta = pct_change(base_val, pub_val)
-
-            if delta is None:
-                st.metric(label, "-", delta="0,00%")
-            else:
-                st.metric(label, fmt_pct(pub_val), delta=f"{delta:.2f}%".replace(".", ","))
-
-
-def render_diff_base_vs_resultado(registro: pd.Series):
-    with st.container(border=True):
-        st.markdown("#### Diferencias %")
-        for key, label, vtype in KPI_DETALLE:
-            base_val = registro.get(key)
-            result_val = registro.get(f"{key}_resultado")
-            delta = pct_change(base_val, result_val)
-
-            if result_val is None or pd.isna(result_val):
-                st.metric(label, "-", delta="0,00%")
-            elif delta is None:
-                st.metric(label, fmt_by_type(result_val, vtype), delta="0,00%")
-            else:
-                st.metric(label, fmt_by_type(result_val, vtype), delta=f"{delta:.2f}%".replace(".", ","))
+            a1.metric("Vtas Ads", fmt_num(row.get("ventas_publicidad"), 0))
+            a2.metric("Vtas Org", fmt_num(row.get("ventas_organicas"), 0))
+            a3.metric("Vtas Totales", fmt_num(total_ventas, 0))
 
 
 def render_datos_generales(registro: pd.Series):
@@ -424,15 +402,86 @@ def render_datos_generales(registro: pd.Series):
             st.write(f"**Estado Ads:** {registro.get('estado_ads', '-')}")
 
 
+def render_metricas_generales(registro: pd.Series, suffix=""):
+    with st.container(border=True):
+        st.markdown("#### Métricas generales")
+        rows = [METRICAS_GENERALES[i:i + 3] for i in range(0, len(METRICAS_GENERALES), 3)]
+
+        for grupo in rows:
+            cols = st.columns(3)
+            for i, (key, label, vtype) in enumerate(grupo):
+                col_name = f"{key}{suffix}"
+                cols[i].metric(label, fmt_by_type(registro.get(col_name), vtype))
+
+
+def render_kpis_base(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### KPIs base")
+        for key, label, _ in KPI_COMPARACION:
+            st.metric(label, fmt_pct(registro.get(key)))
+
+
+def render_kpis_categoria(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### KPIs categoría")
+        st.metric("CTR", fmt_pct(registro.get("ctr_categoria")))
+        st.metric("CVR", fmt_pct(registro.get("cvr_categoria")))
+        st.metric("ACOS", fmt_pct(registro.get("acos_categoria")))
+
+
+def render_kpis_resultado(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### KPIs resultado")
+        st.metric("CTR", fmt_pct(registro.get("ctr_resultado")))
+        st.metric("CVR", fmt_pct(registro.get("cvr_resultado")))
+        st.metric("ACOS", fmt_pct(registro.get("acos_resultado")))
+
+
+def render_vs_categoria(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### VS")
+        pares = [
+            ("CTR", registro.get("ctr_categoria"), registro.get("ctr")),
+            ("CVR", registro.get("cvr_categoria"), registro.get("cvr")),
+            ("ACOS", registro.get("acos_categoria"), registro.get("acos")),
+        ]
+        for label, base_val, comp_val in pares:
+            delta = pct_change(base_val, comp_val)
+            if delta is None:
+                st.metric(label, fmt_pct(comp_val), delta="0,00%")
+            else:
+                st.metric(label, fmt_pct(comp_val), delta=f"{delta:.2f}%".replace(".", ","))
+
+
+def render_vs_resultado(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### VS")
+        pares = [
+            ("CTR", registro.get("ctr"), registro.get("ctr_resultado")),
+            ("CVR", registro.get("cvr"), registro.get("cvr_resultado")),
+            ("ACOS", registro.get("acos"), registro.get("acos_resultado")),
+        ]
+        for label, base_val, comp_val in pares:
+            delta = pct_change(base_val, comp_val)
+            if comp_val is None or pd.isna(comp_val):
+                st.metric(label, "-", delta="0,00%")
+            elif delta is None:
+                st.metric(label, fmt_pct(comp_val), delta="0,00%")
+            else:
+                st.metric(label, fmt_pct(comp_val), delta=f"{delta:.2f}%".replace(".", ","))
+
+
 def render_detalle_publicacion(registro: pd.Series):
     render_datos_generales(registro)
+    render_metricas_generales(registro)
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        render_kpi_group(registro, KPI_DETALLE, "KPIs base")
+        render_kpis_base(registro)
     with c2:
-        render_categoria_group(registro)
+        render_kpis_categoria(registro)
     with c3:
-        render_diff_base_vs_categoria(registro)
+        render_vs_categoria(registro)
 
 
 def render_resumen_medicion(evento: pd.Series):
@@ -450,22 +499,57 @@ def render_resumen_medicion(evento: pd.Series):
 
 
 def render_evento_en_medicion(evento: pd.Series):
-    st.markdown(f"**Responsable:** {evento.get('responsable', '-')}")
-    st.markdown(f"**Cambio realizado:** {evento.get('cambio_realizado', '-')}")
-    st.markdown(f"**Fecha cambio:** {evento.get('fecha_cambio', '-')}")
-    st.markdown(f"**Fecha resultados:** {evento.get('fecha_resultados', '-')}")
+    with st.container(border=True):
+        st.markdown("#### Datos del evento")
+        st.write(f"**Responsable:** {evento.get('responsable', '-')}")
+        st.write(f"**Cambio realizado:** {evento.get('cambio_realizado', '-')}")
+        st.write(f"**Fecha cambio:** {evento.get('fecha_cambio', '-')}")
+        st.write(f"**Fecha resultados:** {evento.get('fecha_resultados', '-')}")
     render_resumen_medicion(evento)
 
 
+def asegurar_kpis_resultado(evento: pd.Series):
+    evento = evento.copy()
+
+    if "ctr_resultado" not in evento.index or pd.isna(evento.get("ctr_resultado")):
+        clicks_r = safe_float(evento.get("clicks_resultado"))
+        impresiones_r = safe_float(evento.get("impresiones_resultado"))
+        evento["ctr_resultado"] = (clicks_r / impresiones_r * 100) if impresiones_r > 0 else None
+
+    if "cvr_resultado" not in evento.index or pd.isna(evento.get("cvr_resultado")):
+        ventas_pub_r = safe_float(evento.get("ventas_publicidad_resultado"))
+        clicks_r = safe_float(evento.get("clicks_resultado"))
+        evento["cvr_resultado"] = (ventas_pub_r / clicks_r * 100) if clicks_r > 0 else None
+
+    if "acos_resultado" not in evento.index or pd.isna(evento.get("acos_resultado")):
+        inv_r = safe_float(evento.get("inversion_resultado"))
+        ing_ads_r = safe_float(evento.get("ingresos_ads_resultado"))
+        evento["acos_resultado"] = (inv_r / ing_ads_r * 100) if ing_ads_r > 0 else None
+
+    return evento
+
+
 def render_evento_con_resultado(evento: pd.Series):
-    render_datos_generales(evento)
+    evento = asegurar_kpis_resultado(evento)
+
+    with st.container(border=True):
+        st.markdown("#### Datos del evento")
+        st.write(f"**Responsable:** {evento.get('responsable', '-')}")
+        st.write(f"**Cambio realizado:** {evento.get('cambio_realizado', '-')}")
+        st.write(f"**Fecha cambio:** {evento.get('fecha_cambio', '-')}")
+        st.write(f"**Fecha resultados:** {evento.get('fecha_resultados', '-')}")
+
+    render_metricas_generales(evento)
+    st.markdown("#### Bloque resultado")
+    render_metricas_generales(evento, suffix="_resultado")
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        render_kpi_group(evento, KPI_DETALLE, "KPIs base")
+        render_kpis_base(evento)
     with c2:
-        render_resultado_group(evento)
+        render_kpis_resultado(evento)
     with c3:
-        render_diff_base_vs_resultado(evento)
+        render_vs_resultado(evento)
 
 
 def mostrar_evento(evento: pd.Series, idx: int):
@@ -521,12 +605,14 @@ with st.container(border=True):
     with d4:
         st.selectbox("Campaign Ads", campaign_opts, key="rc_f_campaign_ads", on_change=aplicar_filtros)
 
-    e1, e2, e3 = st.columns([1, 1, 2])
+    e1, e2, e3, e4 = st.columns([1, 1, 1, 2])
     with e1:
         st.selectbox("Estado Ads", estado_ads_opts, key="rc_f_estado_ads", on_change=aplicar_filtros)
     with e2:
         st.selectbox("Categoría", categoria_opts, key="rc_f_categoria", on_change=aplicar_filtros)
     with e3:
+        st.selectbox("Ver", [5, 10, 50, 100], key="rc_limite_vista")
+    with e4:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Limpiar filtros", use_container_width=True):
             limpiar_filtros()
@@ -535,22 +621,27 @@ with st.container(border=True):
 aplicar_filtros()
 df_vista = st.session_state.rc_df_vista
 publicaciones = agrupador_publicaciones(df_vista)
+publicaciones_visibles = publicaciones.head(int(st.session_state.rc_limite_vista))
 
 m1, m2, m3 = st.columns(3)
 with m1:
-    st.metric("Publicaciones visibles", len(publicaciones))
+    st.metric("Publicaciones visibles", len(publicaciones_visibles))
 with m2:
-    st.metric("Registros filtrados", len(df_vista))
+    st.metric("Total filtradas", len(publicaciones))
 with m3:
     eventos_medibles = 0
     if "etapa_cambio" in df_base.columns:
-        eventos_medibles = len(df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])])
+        eventos_medibles = len(
+            df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])]
+        )
     st.metric("Eventos medibles", eventos_medibles)
 
 st.markdown("### Descargas")
 
 if "etapa_cambio" in df_base.columns:
-    descargable = df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])].copy()
+    descargable = df_base[
+        df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
+    ].copy()
 else:
     descargable = pd.DataFrame()
 
@@ -580,11 +671,11 @@ with x2:
 st.markdown("---")
 st.markdown("### Publicaciones")
 
-if publicaciones.empty:
+if publicaciones_visibles.empty:
     st.info("No hay publicaciones para mostrar con los filtros actuales.")
     st.stop()
 
-for idx, row in publicaciones.iterrows():
+for idx, row in publicaciones_visibles.iterrows():
     mostrar_resumen_publicacion(row)
 
     label = f"{row.get('titulo_meli', '')} | {row.get('id', '')}"
@@ -645,7 +736,9 @@ for idx, row in publicaciones.iterrows():
 
             eventos = obtener_eventos_por_id(df_base, row.get("id"))
             if not eventos.empty and "etapa_cambio" in eventos.columns:
-                eventos = eventos[eventos["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])].copy()
+                eventos = eventos[
+                    eventos["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
+                ].copy()
 
             if eventos.empty:
                 st.caption("Esta publicación aún no tiene eventos registrados.")
