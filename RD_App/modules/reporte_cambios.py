@@ -12,6 +12,45 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown("""
+<style>
+.vs-card{
+    border:1px solid rgba(49,51,63,0.18);
+    border-radius:12px;
+    padding:12px 14px;
+    margin-bottom:10px;
+    background:#ffffff;
+}
+.vs-label{
+    font-size:0.85rem;
+    color:#6b7280;
+    margin-bottom:6px;
+    font-weight:600;
+}
+.vs-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+}
+.vs-value{
+    font-size:1.35rem;
+    font-weight:700;
+    color:#111827;
+    line-height:1.1;
+    white-space:nowrap;
+}
+.vs-delta{
+    font-size:0.95rem;
+    font-weight:700;
+    white-space:nowrap;
+}
+.vs-up{ color:#16a34a; }
+.vs-down{ color:#dc2626; }
+.vs-flat{ color:#6b7280; }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("Reporte de Cambios")
 st.caption("Seguimiento de cambios y comparación antes vs después por publicación.")
 st.markdown("---")
@@ -77,20 +116,6 @@ COLUMNAS_TABLA = [
     "ratio_venta_ads_resultado",
 ]
 
-METRICAS_GENERALES = [
-    ("clicks", "Clicks", "num"),
-    ("impresiones", "Impresiones", "num"),
-    ("inversion", "Inversión", "money"),
-    ("ingresos_directos", "Ingresos Directos", "money"),
-    ("ingresos_indirectos", "Ingresos Indirectos", "money"),
-    ("ingresos_ads", "Ingresos Ads", "money"),
-    ("ingresos_totales", "Ingresos Totales", "money"),
-    ("ventas_directas", "Ventas Directas", "num"),
-    ("ventas_indirectas", "Ventas Indirectas", "num"),
-    ("ventas_publicidad", "Ventas Publicidad", "num"),
-    ("ventas_organicas", "Ventas Orgánicas", "num"),
-]
-
 KPI_COMPARACION = [
     ("ctr", "CTR", "pct"),
     ("cvr", "CVR", "pct"),
@@ -104,17 +129,20 @@ def init_state():
     defaults = {
         "rc_df_base": pd.DataFrame(),
         "rc_df_vista": pd.DataFrame(),
-        "rc_f_id": "",
-        "rc_f_cuenta": "Todas",
-        "rc_f_titulo_meli": "",
-        "rc_f_estado_publicacion": "Todas",
-        "rc_f_logistica": "Todas",
-        "rc_f_sku": "",
-        "rc_f_titulo_ecom": "",
-        "rc_f_campaign_ads": "Todas",
-        "rc_f_estado_ads": "Todas",
-        "rc_f_categoria": "Todas",
         "rc_limite_vista": 5,
+        "rc_filters_nonce": 0,
+        "rc_filter_values": {
+            "id": "",
+            "cuenta": "Todas",
+            "titulo_meli": "",
+            "estado_publicacion": "Todas",
+            "logistica": "Todas",
+            "sku": "",
+            "titulo_ecom": "",
+            "campaign_ads": "Todas",
+            "estado_ads": "Todas",
+            "categoria": "Todas",
+        },
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -193,58 +221,78 @@ def pct_change(base, comp):
     return ((c - b) / b) * 100
 
 
+def leer_filtros_desde_widgets():
+    nonce = st.session_state.rc_filters_nonce
+    st.session_state.rc_filter_values = {
+        "id": st.session_state.get(f"rc_f_id_{nonce}", ""),
+        "cuenta": st.session_state.get(f"rc_f_cuenta_{nonce}", "Todas"),
+        "titulo_meli": st.session_state.get(f"rc_f_titulo_meli_{nonce}", ""),
+        "estado_publicacion": st.session_state.get(f"rc_f_estado_publicacion_{nonce}", "Todas"),
+        "logistica": st.session_state.get(f"rc_f_logistica_{nonce}", "Todas"),
+        "sku": st.session_state.get(f"rc_f_sku_{nonce}", ""),
+        "titulo_ecom": st.session_state.get(f"rc_f_titulo_ecom_{nonce}", ""),
+        "campaign_ads": st.session_state.get(f"rc_f_campaign_ads_{nonce}", "Todas"),
+        "estado_ads": st.session_state.get(f"rc_f_estado_ads_{nonce}", "Todas"),
+        "categoria": st.session_state.get(f"rc_f_categoria_{nonce}", "Todas"),
+    }
+
+
 def aplicar_filtros():
+    leer_filtros_desde_widgets()
+    filtros = st.session_state.rc_filter_values
     df = st.session_state.rc_df_base.copy()
 
     if df.empty:
         st.session_state.rc_df_vista = df
         return
 
-    if st.session_state.rc_f_id.strip() and "id" in df.columns:
-        df = df[df["id"].astype(str).str.contains(st.session_state.rc_f_id.strip(), case=False, na=False)]
+    if filtros["id"].strip() and "id" in df.columns:
+        df = df[df["id"].astype(str).str.contains(filtros["id"].strip(), case=False, na=False)]
 
-    if st.session_state.rc_f_cuenta != "Todas" and "cuenta" in df.columns:
-        df = df[df["cuenta"].astype(str) == st.session_state.rc_f_cuenta]
+    if filtros["cuenta"] != "Todas" and "cuenta" in df.columns:
+        df = df[df["cuenta"].astype(str) == filtros["cuenta"]]
 
-    if st.session_state.rc_f_titulo_meli.strip() and "titulo_meli" in df.columns:
-        df = df[df["titulo_meli"].astype(str).str.contains(st.session_state.rc_f_titulo_meli.strip(), case=False, na=False)]
+    if filtros["titulo_meli"].strip() and "titulo_meli" in df.columns:
+        df = df[df["titulo_meli"].astype(str).str.contains(filtros["titulo_meli"].strip(), case=False, na=False)]
 
-    if st.session_state.rc_f_estado_publicacion != "Todas" and "estado_publicacion" in df.columns:
-        df = df[df["estado_publicacion"].astype(str) == st.session_state.rc_f_estado_publicacion]
+    if filtros["estado_publicacion"] != "Todas" and "estado_publicacion" in df.columns:
+        df = df[df["estado_publicacion"].astype(str) == filtros["estado_publicacion"]]
 
-    if st.session_state.rc_f_logistica != "Todas" and "logistica" in df.columns:
-        df = df[df["logistica"].astype(str) == st.session_state.rc_f_logistica]
+    if filtros["logistica"] != "Todas" and "logistica" in df.columns:
+        df = df[df["logistica"].astype(str) == filtros["logistica"]]
 
-    if st.session_state.rc_f_sku.strip() and "sku" in df.columns:
-        df = df[df["sku"].astype(str).str.contains(st.session_state.rc_f_sku.strip(), case=False, na=False)]
+    if filtros["sku"].strip() and "sku" in df.columns:
+        df = df[df["sku"].astype(str).str.contains(filtros["sku"].strip(), case=False, na=False)]
 
-    if st.session_state.rc_f_titulo_ecom.strip() and "titulo_ecom" in df.columns:
-        df = df[df["titulo_ecom"].astype(str).str.contains(st.session_state.rc_f_titulo_ecom.strip(), case=False, na=False)]
+    if filtros["titulo_ecom"].strip() and "titulo_ecom" in df.columns:
+        df = df[df["titulo_ecom"].astype(str).str.contains(filtros["titulo_ecom"].strip(), case=False, na=False)]
 
-    if st.session_state.rc_f_campaign_ads != "Todas" and "campaign_ads" in df.columns:
-        df = df[df["campaign_ads"].astype(str) == st.session_state.rc_f_campaign_ads]
+    if filtros["campaign_ads"] != "Todas" and "campaign_ads" in df.columns:
+        df = df[df["campaign_ads"].astype(str) == filtros["campaign_ads"]]
 
-    if st.session_state.rc_f_estado_ads != "Todas" and "estado_ads" in df.columns:
-        df = df[df["estado_ads"].astype(str) == st.session_state.rc_f_estado_ads]
+    if filtros["estado_ads"] != "Todas" and "estado_ads" in df.columns:
+        df = df[df["estado_ads"].astype(str) == filtros["estado_ads"]]
 
-    if st.session_state.rc_f_categoria != "Todas" and "categoria" in df.columns:
-        df = df[df["categoria"].astype(str) == st.session_state.rc_f_categoria]
+    if filtros["categoria"] != "Todas" and "categoria" in df.columns:
+        df = df[df["categoria"].astype(str) == filtros["categoria"]]
 
     st.session_state.rc_df_vista = df.copy()
 
 
 def limpiar_filtros():
-    st.session_state.rc_f_id = ""
-    st.session_state.rc_f_cuenta = "Todas"
-    st.session_state.rc_f_titulo_meli = ""
-    st.session_state.rc_f_estado_publicacion = "Todas"
-    st.session_state.rc_f_logistica = "Todas"
-    st.session_state.rc_f_sku = ""
-    st.session_state.rc_f_titulo_ecom = ""
-    st.session_state.rc_f_campaign_ads = "Todas"
-    st.session_state.rc_f_estado_ads = "Todas"
-    st.session_state.rc_f_categoria = "Todas"
-    aplicar_filtros()
+    st.session_state.rc_filter_values = {
+        "id": "",
+        "cuenta": "Todas",
+        "titulo_meli": "",
+        "estado_publicacion": "Todas",
+        "logistica": "Todas",
+        "sku": "",
+        "titulo_ecom": "",
+        "campaign_ads": "Todas",
+        "estado_ads": "Todas",
+        "categoria": "Todas",
+    }
+    st.session_state.rc_filters_nonce += 1
 
 
 def calcular_ventas_totales(df: pd.DataFrame):
@@ -362,6 +410,32 @@ def convert_df_to_excel(df: pd.DataFrame):
     return buffer.getvalue()
 
 
+def render_vs_item(label, value, delta):
+    if delta is None:
+        delta_txt = "→ 0,00%"
+        delta_class = "vs-flat"
+    elif delta > 0:
+        delta_txt = f"↑ {delta:.2f}%".replace(".", ",")
+        delta_class = "vs-up"
+    elif delta < 0:
+        delta_txt = f"↓ {abs(delta):.2f}%".replace(".", ",")
+        delta_class = "vs-down"
+    else:
+        delta_txt = "→ 0,00%"
+        delta_class = "vs-flat"
+
+    html = f"""
+    <div class="vs-card">
+        <div class="vs-label">{label}</div>
+        <div class="vs-row">
+            <div class="vs-value">{value}</div>
+            <div class="vs-delta {delta_class}">{delta_txt}</div>
+        </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def mostrar_resumen_publicacion(row: pd.Series):
     total_ventas = safe_float(row.get("ventas_totales_calc"))
 
@@ -413,13 +487,46 @@ def render_datos_generales(registro: pd.Series):
 def render_metricas_generales(registro: pd.Series, suffix=""):
     with st.container(border=True):
         st.markdown("#### Métricas generales")
-        rows = [METRICAS_GENERALES[i:i + 3] for i in range(0, len(METRICAS_GENERALES), 3)]
 
-        for grupo in rows:
-            cols = st.columns(3)
-            for i, (key, label, vtype) in enumerate(grupo):
+        fila_1 = [
+            ("clicks", "Clicks", "num"),
+            ("impresiones", "Impresiones", "num"),
+            ("inversion", "Inversión", "money"),
+        ]
+        fila_2 = [
+            ("ingresos_directos", "Ingresos Directos", "money"),
+            ("ingresos_indirectos", "Ingresos Indirectos", "money"),
+            ("ingresos_ads", "Ingresos Ads", "money"),
+            ("ingresos_totales", "Ingresos Totales", "money"),
+        ]
+        fila_3 = [
+            ("ventas_directas", "Ventas Directas", "num"),
+            ("ventas_indirectas", "Ventas Indirectas", "num"),
+            ("ventas_publicidad", "Ventas Publicidad", "num"),
+            ("ventas_totales_calc", "Ventas Totales", "num"),
+        ]
+
+        cols1 = st.columns(3)
+        for i, (key, label, vtype) in enumerate(fila_1):
+            col_name = f"{key}{suffix}"
+            cols1[i].metric(label, fmt_by_type(registro.get(col_name), vtype))
+
+        cols2 = st.columns(4)
+        for i, (key, label, vtype) in enumerate(fila_2):
+            col_name = f"{key}{suffix}"
+            cols2[i].metric(label, fmt_by_type(registro.get(col_name), vtype))
+
+        cols3 = st.columns(4)
+        for i, (key, label, vtype) in enumerate(fila_3):
+            if suffix == "_resultado" and key == "ventas_totales_calc":
+                total_resultado = safe_float(registro.get("ventas_organicas_resultado")) + safe_float(registro.get("ventas_publicidad_resultado"))
+                cols3[i].metric(label, fmt_by_type(total_resultado, vtype))
+            elif key == "ventas_totales_calc":
+                total_base = safe_float(registro.get("ventas_organicas")) + safe_float(registro.get("ventas_publicidad"))
+                cols3[i].metric(label, fmt_by_type(total_base, vtype))
+            else:
                 col_name = f"{key}{suffix}"
-                cols[i].metric(label, fmt_by_type(registro.get(col_name), vtype))
+                cols3[i].metric(label, fmt_by_type(registro.get(col_name), vtype))
 
 
 def render_kpis_base(registro: pd.Series):
@@ -468,11 +575,7 @@ def render_vs_categoria(registro: pd.Series):
             ("Ratio Venta Ads", registro.get("ratio_venta_ads_categoria"), registro.get("ratio_venta_ads")),
         ]
         for label, base_val, comp_val in pares:
-            delta = pct_change(base_val, comp_val)
-            if delta is None:
-                st.metric(label, fmt_pct(comp_val), delta="0,00%")
-            else:
-                st.metric(label, fmt_pct(comp_val), delta=f"{delta:.2f}%".replace(".", ","))
+            render_vs_item(label, fmt_pct(comp_val), pct_change(base_val, comp_val))
 
 
 def render_vs_resultado(registro: pd.Series):
@@ -486,13 +589,7 @@ def render_vs_resultado(registro: pd.Series):
             ("Ratio Venta Ads", registro.get("ratio_venta_ads"), registro.get("ratio_venta_ads_resultado")),
         ]
         for label, base_val, comp_val in pares:
-            delta = pct_change(base_val, comp_val)
-            if comp_val is None or pd.isna(comp_val):
-                st.metric(label, "-", delta="0,00%")
-            elif delta is None:
-                st.metric(label, fmt_pct(comp_val), delta="0,00%")
-            else:
-                st.metric(label, fmt_pct(comp_val), delta=f"{delta:.2f}%".replace(".", ","))
+            render_vs_item(label, fmt_pct(comp_val), pct_change(base_val, comp_val))
 
 
 def render_detalle_publicacion(registro: pd.Series):
@@ -617,35 +714,37 @@ logistica_opts = options_from_column(df_base, "logistica")
 campaign_opts = options_from_column(df_base, "campaign_ads")
 estado_ads_opts = options_from_column(df_base, "estado_ads")
 categoria_opts = options_from_column(df_base, "categoria")
+filtros = st.session_state.rc_filter_values
+nonce = st.session_state.rc_filters_nonce
 
 with st.container(border=True):
     st.markdown("### Filtros")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.text_input("ID", key="rc_f_id", placeholder="Buscar ID...", on_change=aplicar_filtros)
+        st.text_input("ID", key=f"rc_f_id_{nonce}", value=filtros["id"], placeholder="Buscar ID...", on_change=aplicar_filtros)
     with c2:
-        st.selectbox("Cuenta", cuenta_opts, key="rc_f_cuenta", on_change=aplicar_filtros)
+        st.selectbox("Cuenta", cuenta_opts, key=f"rc_f_cuenta_{nonce}", index=cuenta_opts.index(filtros["cuenta"]) if filtros["cuenta"] in cuenta_opts else 0, on_change=aplicar_filtros)
     with c3:
-        st.text_input("Título Meli", key="rc_f_titulo_meli", placeholder="Buscar título...", on_change=aplicar_filtros)
+        st.text_input("Título Meli", key=f"rc_f_titulo_meli_{nonce}", value=filtros["titulo_meli"], placeholder="Buscar título...", on_change=aplicar_filtros)
     with c4:
-        st.selectbox("Estado publicación", estado_pub_opts, key="rc_f_estado_publicacion", on_change=aplicar_filtros)
+        st.selectbox("Estado publicación", estado_pub_opts, key=f"rc_f_estado_publicacion_{nonce}", index=estado_pub_opts.index(filtros["estado_publicacion"]) if filtros["estado_publicacion"] in estado_pub_opts else 0, on_change=aplicar_filtros)
 
     d1, d2, d3, d4 = st.columns(4)
     with d1:
-        st.selectbox("Logística", logistica_opts, key="rc_f_logistica", on_change=aplicar_filtros)
+        st.selectbox("Logística", logistica_opts, key=f"rc_f_logistica_{nonce}", index=logistica_opts.index(filtros["logistica"]) if filtros["logistica"] in logistica_opts else 0, on_change=aplicar_filtros)
     with d2:
-        st.text_input("SKU", key="rc_f_sku", placeholder="Buscar SKU...", on_change=aplicar_filtros)
+        st.text_input("SKU", key=f"rc_f_sku_{nonce}", value=filtros["sku"], placeholder="Buscar SKU...", on_change=aplicar_filtros)
     with d3:
-        st.text_input("Título Ecom", key="rc_f_titulo_ecom", placeholder="Buscar título Ecom...", on_change=aplicar_filtros)
+        st.text_input("Título Ecom", key=f"rc_f_titulo_ecom_{nonce}", value=filtros["titulo_ecom"], placeholder="Buscar título Ecom...", on_change=aplicar_filtros)
     with d4:
-        st.selectbox("Campaign Ads", campaign_opts, key="rc_f_campaign_ads", on_change=aplicar_filtros)
+        st.selectbox("Campaign Ads", campaign_opts, key=f"rc_f_campaign_ads_{nonce}", index=campaign_opts.index(filtros["campaign_ads"]) if filtros["campaign_ads"] in campaign_opts else 0, on_change=aplicar_filtros)
 
     e1, e2, e3, e4 = st.columns([1, 1, 1, 2])
     with e1:
-        st.selectbox("Estado Ads", estado_ads_opts, key="rc_f_estado_ads", on_change=aplicar_filtros)
+        st.selectbox("Estado Ads", estado_ads_opts, key=f"rc_f_estado_ads_{nonce}", index=estado_ads_opts.index(filtros["estado_ads"]) if filtros["estado_ads"] in estado_ads_opts else 0, on_change=aplicar_filtros)
     with e2:
-        st.selectbox("Categoría", categoria_opts, key="rc_f_categoria", on_change=aplicar_filtros)
+        st.selectbox("Categoría", categoria_opts, key=f"rc_f_categoria_{nonce}", index=categoria_opts.index(filtros["categoria"]) if filtros["categoria"] in categoria_opts else 0, on_change=aplicar_filtros)
     with e3:
         st.selectbox("Ver", [5, 10, 50, 100], key="rc_limite_vista")
     with e4:
