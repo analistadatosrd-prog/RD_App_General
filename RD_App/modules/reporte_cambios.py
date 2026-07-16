@@ -4,7 +4,7 @@ from datetime import timedelta
 import pandas as pd
 import streamlit as st
 
-from services.db import fetch_all, execute_query
+from services.db import fetch_all, execute
 
 st.set_page_config(
     page_title="Reporte de Cambios",
@@ -98,11 +98,7 @@ def cargar_datos():
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
 
     if not df.empty:
-        for col in [
-            "fecha",
-            "fecha_cambio",
-            "fecha_resultados",
-        ]:
+        for col in ["fecha", "fecha_cambio", "fecha_resultados"]:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
 
@@ -242,31 +238,9 @@ def obtener_eventos_por_id(df: pd.DataFrame, pub_id: str):
     else:
         eventos["fecha_sort"] = pd.NaT
 
-    eventos = eventos.sort_values(
-        ["fecha_cambio_sort", "fecha_sort"],
-        ascending=[False, False],
-    )
+    eventos = eventos.sort_values(["fecha_cambio_sort", "fecha_sort"], ascending=[False, False])
 
     return eventos
-
-
-def delta_text(actual, referencia, money=False, pct=False):
-    a = safe_float(actual)
-    b = safe_float(referencia)
-    d = a - b
-
-    if money:
-        texto = fmt_money(d)
-    elif pct:
-        texto = fmt_pct(d)
-    else:
-        texto = fmt_num(d, 2)
-
-    if d > 0:
-        return f"↑ {texto}", "normal"
-    if d < 0:
-        return f"↓ {texto}", "inverse"
-    return f"= {texto}", "off"
 
 
 def preparar_insert_desde_registro(registro: dict, fecha_cambio, responsable, cambio_realizado):
@@ -296,7 +270,7 @@ def insertar_copia_con_cambio(registro: dict, fecha_cambio, responsable, cambio_
         VALUES ({placeholders})
     """
 
-    execute_query(query, tuple(valores))
+    execute(query, tuple(valores))
 
 
 @st.cache_data
@@ -325,8 +299,7 @@ def mostrar_resumen_publicacion(row: pd.Series):
     ventas_org = safe_float(row.get("ventas_organicas"))
     total_ventas = ventas_ads + ventas_org
 
-    cont = st.container(border=True)
-    with cont:
+    with st.container(border=True):
         c1, c2, c3, c4 = st.columns([0.6, 1.1, 4.5, 2.2])
 
         with c1:
@@ -353,32 +326,6 @@ def mostrar_resumen_publicacion(row: pd.Series):
             a3.metric("Total", fmt_num(total_ventas, 0))
 
 
-def mostrar_vs_categoria(registro: pd.Series):
-    st.markdown("#### Indicadores vs categoría")
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric(
-        "CTR publicación",
-        fmt_pct(registro.get("ctr")),
-        delta=delta_text(registro.get("ctr"), registro.get("ctr_categoria"), pct=True)[0],
-    )
-    c2.metric(
-        "CVR publicación",
-        fmt_pct(registro.get("cvr")),
-        delta=delta_text(registro.get("cvr"), registro.get("cvr_categoria"), pct=True)[0],
-    )
-    c3.metric(
-        "ACOS publicación",
-        fmt_pct(registro.get("acos")),
-        delta=delta_text(registro.get("acos"), registro.get("acos_categoria"), pct=True)[0],
-    )
-
-    d1, d2, d3 = st.columns(3)
-    d1.metric("CTR categoría", fmt_pct(registro.get("ctr_categoria")))
-    d2.metric("CVR categoría", fmt_pct(registro.get("cvr_categoria")))
-    d3.metric("ACOS categoría", fmt_pct(registro.get("acos_categoria")))
-
-
 def mostrar_kpis_base(registro: pd.Series):
     st.markdown("#### KPIs base")
 
@@ -394,6 +341,20 @@ def mostrar_kpis_base(registro: pd.Series):
     r2[1].metric("Ventas Indirectas", fmt_num(registro.get("ventas_indirectas"), 0))
     r2[2].metric("Ventas Publicidad", fmt_num(registro.get("ventas_publicidad"), 0))
     r2[3].metric("Ventas Orgánicas", fmt_num(registro.get("ventas_organicas"), 0))
+
+
+def mostrar_vs_categoria(registro: pd.Series):
+    st.markdown("#### Indicadores vs categoría")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("CTR publicación", fmt_pct(registro.get("ctr")))
+    c2.metric("CVR publicación", fmt_pct(registro.get("cvr")))
+    c3.metric("ACOS publicación", fmt_pct(registro.get("acos")))
+
+    d1, d2, d3 = st.columns(3)
+    d1.metric("CTR categoría", fmt_pct(registro.get("ctr_categoria")))
+    d2.metric("CVR categoría", fmt_pct(registro.get("cvr_categoria")))
+    d3.metric("ACOS categoría", fmt_pct(registro.get("acos_categoria")))
 
 
 def mostrar_evento(evento: pd.Series, idx: int):
@@ -520,14 +481,26 @@ df_vista = st.session_state.rc_df_vista
 publicaciones = agrupador_publicaciones(df_vista)
 
 m1, m2, m3 = st.columns(3)
-m1.metric("Publicaciones visibles", len(publicaciones))
-m2.metric("Registros filtrados", len(df_vista))
-m3.metric("Eventos medibles", len(df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])]))
+with m1:
+    st.metric("Publicaciones visibles", len(publicaciones))
+with m2:
+    st.metric("Registros filtrados", len(df_vista))
+with m3:
+    eventos_medibles = 0
+    if "etapa_cambio" in df_base.columns:
+        eventos_medibles = len(
+            df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])]
+        )
+    st.metric("Eventos medibles", eventos_medibles)
 
 st.markdown("### Descargas")
-descargable = df_base[
-    df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
-].copy()
+
+if "etapa_cambio" in df_base.columns:
+    descargable = df_base[
+        df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
+    ].copy()
+else:
+    descargable = pd.DataFrame()
 
 x1, x2, _ = st.columns([1, 1, 4])
 with x1:
@@ -538,6 +511,7 @@ with x1:
         mime="text/csv",
         use_container_width=True,
     )
+
 with x2:
     excel_bytes = convert_df_to_excel(descargable)
     if excel_bytes is not None:
@@ -635,9 +609,10 @@ for idx, row in publicaciones.iterrows():
         st.markdown("#### Eventos de cambios y resultados")
 
         eventos = obtener_eventos_por_id(df_base, row.get("id"))
-        eventos = eventos[
-            eventos["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
-        ].copy()
+        if not eventos.empty and "etapa_cambio" in eventos.columns:
+            eventos = eventos[
+                eventos["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
+            ].copy()
 
         if eventos.empty:
             st.caption("Esta publicación aún no tiene eventos registrados.")
