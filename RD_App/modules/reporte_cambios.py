@@ -59,7 +59,7 @@ RESPONSABLES_CAMBIO = [
     "andres",
     "coco",
     "valeria",
-    "ezeqiel",
+    "ezequiel",
     "monica"
 ]
 
@@ -145,6 +145,8 @@ def init_state():
             "campaign_ads": "Todas",
             "estado_ads": "Todas",
             "categoria": "Todas",
+            "etapa_cambio": "Todas",
+            "responsable": "Todos",
         },
     }
     for key, value in defaults.items():
@@ -165,11 +167,11 @@ def cargar_datos():
     st.session_state.rc_df_vista = df.copy()
 
 
-def options_from_column(df: pd.DataFrame, col: str):
+def options_from_column(df: pd.DataFrame, col: str, all_label="Todas"):
     if df.empty or col not in df.columns:
-        return ["Todas"]
+        return [all_label]
     vals = sorted([str(x) for x in df[col].dropna().unique().tolist() if str(x).strip()])
-    return ["Todas"] + vals
+    return [all_label] + vals
 
 
 def safe_float(value):
@@ -248,6 +250,8 @@ def leer_filtros_desde_widgets():
         "campaign_ads": st.session_state.get(f"rc_f_campaign_ads_{nonce}", "Todas"),
         "estado_ads": st.session_state.get(f"rc_f_estado_ads_{nonce}", "Todas"),
         "categoria": st.session_state.get(f"rc_f_categoria_{nonce}", "Todas"),
+        "etapa_cambio": st.session_state.get(f"rc_f_etapa_cambio_{nonce}", "Todas"),
+        "responsable": st.session_state.get(f"rc_f_responsable_{nonce}", "Todos"),
     }
 
 
@@ -290,6 +294,12 @@ def aplicar_filtros():
     if filtros["categoria"] != "Todas" and "categoria" in df.columns:
         df = df[df["categoria"].astype(str) == filtros["categoria"]]
 
+    if filtros["etapa_cambio"] != "Todas" and "etapa_cambio" in df.columns:
+        df = df[df["etapa_cambio"].astype(str) == filtros["etapa_cambio"]]
+
+    if filtros["responsable"] != "Todos" and "responsable" in df.columns:
+        df = df[df["responsable"].astype(str) == filtros["responsable"]]
+
     st.session_state.rc_df_vista = df.copy()
 
 
@@ -305,6 +315,8 @@ def limpiar_filtros():
         "campaign_ads": "Todas",
         "estado_ads": "Todas",
         "categoria": "Todas",
+        "etapa_cambio": "Todas",
+        "responsable": "Todos",
     }
     st.session_state.rc_filters_nonce += 1
 
@@ -469,7 +481,11 @@ def mostrar_resumen_publicacion(row: pd.Series):
         with c3:
             st.markdown(f"**{row.get('titulo_meli', '')}**")
             st.caption(f"ID: {row.get('id', '')} | SKU: {row.get('sku', '')}")
-            st.caption(f"Cuenta: {row.get('cuenta', '')} | Estado: {row.get('estado_publicacion', '')} | Logística: {row.get('logistica', '')}")
+            st.caption(
+                f"Cuenta: {row.get('cuenta', '')} | Estado: {row.get('estado_publicacion', '')} | "
+                f"Logística: {row.get('logistica', '')} | Etapa: {row.get('etapa_cambio', '')}"
+            )
+            st.caption(f"Responsable: {row.get('responsable', '')}")
             if row.get("enlace_meli"):
                 st.link_button("Abrir publicación", row.get("enlace_meli"), use_container_width=False)
 
@@ -487,15 +503,19 @@ def render_datos_generales(registro: pd.Series):
         with c1:
             st.write(f"**Cuenta:** {registro.get('cuenta', '-')}")
             st.write(f"**ID:** {registro.get('id', '-')}")
+            st.write(f"**Responsable:** {registro.get('responsable', '-')}")
         with c2:
             st.write(f"**SKU:** {registro.get('sku', '-')}")
             st.write(f"**Categoría:** {registro.get('categoria', '-')}")
+            st.write(f"**Etapa cambio:** {registro.get('etapa_cambio', '-')}")
         with c3:
             st.write(f"**Estado publicación:** {registro.get('estado_publicacion', '-')}")
             st.write(f"**Logística:** {registro.get('logistica', '-')}")
+            st.write(f"**Fecha cambio:** {registro.get('fecha_cambio', '-')}")
         with c4:
             st.write(f"**Campaign Ads:** {registro.get('campaign_ads', '-')}")
             st.write(f"**Estado Ads:** {registro.get('estado_ads', '-')}")
+            st.write(f"**Fecha resultados:** {registro.get('fecha_resultados', '-')}")
 
 
 def render_metricas_generales(registro: pd.Series, suffix=""):
@@ -638,6 +658,7 @@ def render_evento_en_medicion(evento: pd.Series):
         st.markdown("#### Datos del evento")
         st.write(f"**Responsable:** {evento.get('responsable', '-')}")
         st.write(f"**Cambio realizado:** {evento.get('cambio_realizado', '-')}")
+        st.write(f"**Etapa cambio:** {evento.get('etapa_cambio', '-')}")
         st.write(f"**Fecha cambio:** {evento.get('fecha_cambio', '-')}")
         st.write(f"**Fecha resultados:** {evento.get('fecha_resultados', '-')}")
     render_resumen_medicion(evento)
@@ -683,6 +704,7 @@ def render_evento_con_resultado(evento: pd.Series):
         st.markdown("#### Datos del evento")
         st.write(f"**Responsable:** {evento.get('responsable', '-')}")
         st.write(f"**Cambio realizado:** {evento.get('cambio_realizado', '-')}")
+        st.write(f"**Etapa cambio:** {evento.get('etapa_cambio', '-')}")
         st.write(f"**Fecha cambio:** {evento.get('fecha_cambio', '-')}")
         st.write(f"**Fecha resultados:** {evento.get('fecha_resultados', '-')}")
 
@@ -728,6 +750,9 @@ logistica_opts = options_from_column(df_base, "logistica")
 campaign_opts = options_from_column(df_base, "campaign_ads")
 estado_ads_opts = options_from_column(df_base, "estado_ads")
 categoria_opts = options_from_column(df_base, "categoria")
+etapa_cambio_opts = options_from_column(df_base, "etapa_cambio")
+responsable_opts = options_from_column(df_base, "responsable", all_label="Todos")
+
 filtros = st.session_state.rc_filter_values
 nonce = st.session_state.rc_filters_nonce
 
@@ -736,32 +761,110 @@ with st.container(border=True):
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.text_input("ID", key=f"rc_f_id_{nonce}", value=filtros["id"], placeholder="Buscar ID...", on_change=aplicar_filtros)
+        st.text_input(
+            "ID",
+            key=f"rc_f_id_{nonce}",
+            value=filtros["id"],
+            placeholder="Buscar ID...",
+            on_change=aplicar_filtros,
+        )
     with c2:
-        st.selectbox("Cuenta", cuenta_opts, key=f"rc_f_cuenta_{nonce}", index=cuenta_opts.index(filtros["cuenta"]) if filtros["cuenta"] in cuenta_opts else 0, on_change=aplicar_filtros)
+        st.selectbox(
+            "Cuenta",
+            cuenta_opts,
+            key=f"rc_f_cuenta_{nonce}",
+            index=cuenta_opts.index(filtros["cuenta"]) if filtros["cuenta"] in cuenta_opts else 0,
+            on_change=aplicar_filtros,
+        )
     with c3:
-        st.text_input("Título Meli", key=f"rc_f_titulo_meli_{nonce}", value=filtros["titulo_meli"], placeholder="Buscar título...", on_change=aplicar_filtros)
+        st.text_input(
+            "Título Meli",
+            key=f"rc_f_titulo_meli_{nonce}",
+            value=filtros["titulo_meli"],
+            placeholder="Buscar título...",
+            on_change=aplicar_filtros,
+        )
     with c4:
-        st.selectbox("Estado publicación", estado_pub_opts, key=f"rc_f_estado_publicacion_{nonce}", index=estado_pub_opts.index(filtros["estado_publicacion"]) if filtros["estado_publicacion"] in estado_pub_opts else 0, on_change=aplicar_filtros)
+        st.selectbox(
+            "Estado publicación",
+            estado_pub_opts,
+            key=f"rc_f_estado_publicacion_{nonce}",
+            index=estado_pub_opts.index(filtros["estado_publicacion"]) if filtros["estado_publicacion"] in estado_pub_opts else 0,
+            on_change=aplicar_filtros,
+        )
 
     d1, d2, d3, d4 = st.columns(4)
     with d1:
-        st.selectbox("Logística", logistica_opts, key=f"rc_f_logistica_{nonce}", index=logistica_opts.index(filtros["logistica"]) if filtros["logistica"] in logistica_opts else 0, on_change=aplicar_filtros)
+        st.selectbox(
+            "Logística",
+            logistica_opts,
+            key=f"rc_f_logistica_{nonce}",
+            index=logistica_opts.index(filtros["logistica"]) if filtros["logistica"] in logistica_opts else 0,
+            on_change=aplicar_filtros,
+        )
     with d2:
-        st.text_input("SKU", key=f"rc_f_sku_{nonce}", value=filtros["sku"], placeholder="Buscar SKU...", on_change=aplicar_filtros)
+        st.text_input(
+            "SKU",
+            key=f"rc_f_sku_{nonce}",
+            value=filtros["sku"],
+            placeholder="Buscar SKU...",
+            on_change=aplicar_filtros,
+        )
     with d3:
-        st.text_input("Título Ecom", key=f"rc_f_titulo_ecom_{nonce}", value=filtros["titulo_ecom"], placeholder="Buscar título Ecom...", on_change=aplicar_filtros)
+        st.text_input(
+            "Título Ecom",
+            key=f"rc_f_titulo_ecom_{nonce}",
+            value=filtros["titulo_ecom"],
+            placeholder="Buscar título Ecom...",
+            on_change=aplicar_filtros,
+        )
     with d4:
-        st.selectbox("Campaign Ads", campaign_opts, key=f"rc_f_campaign_ads_{nonce}", index=campaign_opts.index(filtros["campaign_ads"]) if filtros["campaign_ads"] in campaign_opts else 0, on_change=aplicar_filtros)
+        st.selectbox(
+            "Campaign Ads",
+            campaign_opts,
+            key=f"rc_f_campaign_ads_{nonce}",
+            index=campaign_opts.index(filtros["campaign_ads"]) if filtros["campaign_ads"] in campaign_opts else 0,
+            on_change=aplicar_filtros,
+        )
 
-    e1, e2, e3, e4 = st.columns([1, 1, 1, 2])
+    e1, e2, e3, e4 = st.columns(4)
     with e1:
-        st.selectbox("Estado Ads", estado_ads_opts, key=f"rc_f_estado_ads_{nonce}", index=estado_ads_opts.index(filtros["estado_ads"]) if filtros["estado_ads"] in estado_ads_opts else 0, on_change=aplicar_filtros)
+        st.selectbox(
+            "Estado Ads",
+            estado_ads_opts,
+            key=f"rc_f_estado_ads_{nonce}",
+            index=estado_ads_opts.index(filtros["estado_ads"]) if filtros["estado_ads"] in estado_ads_opts else 0,
+            on_change=aplicar_filtros,
+        )
     with e2:
-        st.selectbox("Categoría", categoria_opts, key=f"rc_f_categoria_{nonce}", index=categoria_opts.index(filtros["categoria"]) if filtros["categoria"] in categoria_opts else 0, on_change=aplicar_filtros)
+        st.selectbox(
+            "Categoría",
+            categoria_opts,
+            key=f"rc_f_categoria_{nonce}",
+            index=categoria_opts.index(filtros["categoria"]) if filtros["categoria"] in categoria_opts else 0,
+            on_change=aplicar_filtros,
+        )
     with e3:
-        st.selectbox("Ver", [5, 10, 50, 100], key="rc_limite_vista")
+        st.selectbox(
+            "Etapa cambio",
+            etapa_cambio_opts,
+            key=f"rc_f_etapa_cambio_{nonce}",
+            index=etapa_cambio_opts.index(filtros["etapa_cambio"]) if filtros["etapa_cambio"] in etapa_cambio_opts else 0,
+            on_change=aplicar_filtros,
+        )
     with e4:
+        st.selectbox(
+            "Responsable",
+            responsable_opts,
+            key=f"rc_f_responsable_{nonce}",
+            index=responsable_opts.index(filtros["responsable"]) if filtros["responsable"] in responsable_opts else 0,
+            on_change=aplicar_filtros,
+        )
+
+    f1, f2 = st.columns([1, 2])
+    with f1:
+        st.selectbox("Ver", [5, 10, 50, 100], key="rc_limite_vista")
+    with f2:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Limpiar filtros", use_container_width=True):
             limpiar_filtros()
