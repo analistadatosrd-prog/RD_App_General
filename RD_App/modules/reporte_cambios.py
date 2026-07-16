@@ -59,8 +59,8 @@ RESPONSABLES_CAMBIO = [
     "andres",
     "coco",
     "valeria",
-    "ezequiel",
-    "monica"
+    "ezeqiel",
+    "monica",
 ]
 
 COLUMNAS_TABLA = [
@@ -436,19 +436,31 @@ def convert_df_to_excel(df: pd.DataFrame):
     return buffer.getvalue()
 
 
-def render_vs_item(label, value, delta):
+def render_vs_item(label, value, delta, inverse=False):
     if delta is None:
         delta_txt = "→ 0,00%"
         delta_class = "vs-flat"
-    elif delta > 0:
-        delta_txt = f"↑ {delta:.2f}%".replace(".", ",")
-        delta_class = "vs-up"
-    elif delta < 0:
-        delta_txt = f"↓ {abs(delta):.2f}%".replace(".", ",")
-        delta_class = "vs-down"
     else:
-        delta_txt = "→ 0,00%"
-        delta_class = "vs-flat"
+        if inverse:
+            if delta < 0:
+                delta_txt = f"↓ {abs(delta):.2f}%".replace(".", ",")
+                delta_class = "vs-up"
+            elif delta > 0:
+                delta_txt = f"↑ {delta:.2f}%".replace(".", ",")
+                delta_class = "vs-down"
+            else:
+                delta_txt = "→ 0,00%"
+                delta_class = "vs-flat"
+        else:
+            if delta > 0:
+                delta_txt = f"↑ {delta:.2f}%".replace(".", ",")
+                delta_class = "vs-up"
+            elif delta < 0:
+                delta_txt = f"↓ {abs(delta):.2f}%".replace(".", ",")
+                delta_class = "vs-down"
+            else:
+                delta_txt = "→ 0,00%"
+                delta_class = "vs-flat"
 
     html = f"""
     <div class="vs-card">
@@ -602,28 +614,28 @@ def render_vs_categoria(registro: pd.Series):
     with st.container(border=True):
         st.markdown("#### VS")
         pares = [
-            ("CTR", registro.get("ctr_categoria"), registro.get("ctr"), "pct"),
-            ("CVR", registro.get("cvr_categoria"), registro.get("cvr"), "pct"),
-            ("ACOS", registro.get("acos_categoria"), registro.get("acos"), "pct"),
-            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica_categoria"), registro.get("ratio_venta_organica"), "plain"),
-            ("Ratio Venta Ads", registro.get("ratio_venta_ads_categoria"), registro.get("ratio_venta_ads"), "plain"),
+            ("CTR", registro.get("ctr_categoria"), registro.get("ctr"), "pct", False),
+            ("CVR", registro.get("cvr_categoria"), registro.get("cvr"), "pct", False),
+            ("ACOS", registro.get("acos_categoria"), registro.get("acos"), "pct", True),
+            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica_categoria"), registro.get("ratio_venta_organica"), "plain", False),
+            ("Ratio Venta Ads", registro.get("ratio_venta_ads_categoria"), registro.get("ratio_venta_ads"), "plain", False),
         ]
-        for label, base_val, comp_val, value_type in pares:
-            render_vs_item(label, fmt_by_type(comp_val, value_type), pct_change(base_val, comp_val))
+        for label, base_val, comp_val, value_type, inverse in pares:
+            render_vs_item(label, fmt_by_type(comp_val, value_type), pct_change(base_val, comp_val), inverse=inverse)
 
 
 def render_vs_resultado(registro: pd.Series):
     with st.container(border=True):
         st.markdown("#### VS")
         pares = [
-            ("CTR", registro.get("ctr"), registro.get("ctr_resultado"), "pct"),
-            ("CVR", registro.get("cvr"), registro.get("cvr_resultado"), "pct"),
-            ("ACOS", registro.get("acos"), registro.get("acos_resultado"), "pct"),
-            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica"), registro.get("ratio_venta_organica_resultado"), "plain"),
-            ("Ratio Venta Ads", registro.get("ratio_venta_ads"), registro.get("ratio_venta_ads_resultado"), "plain"),
+            ("CTR", registro.get("ctr"), registro.get("ctr_resultado"), "pct", False),
+            ("CVR", registro.get("cvr"), registro.get("cvr_resultado"), "pct", False),
+            ("ACOS", registro.get("acos"), registro.get("acos_resultado"), "pct", True),
+            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica"), registro.get("ratio_venta_organica_resultado"), "plain", False),
+            ("Ratio Venta Ads", registro.get("ratio_venta_ads"), registro.get("ratio_venta_ads_resultado"), "plain", False),
         ]
-        for label, base_val, comp_val, value_type in pares:
-            render_vs_item(label, fmt_by_type(comp_val, value_type), pct_change(base_val, comp_val))
+        for label, base_val, comp_val, value_type, inverse in pares:
+            render_vs_item(label, fmt_by_type(comp_val, value_type), pct_change(base_val, comp_val), inverse=inverse)
 
 
 def render_detalle_publicacion(registro: pd.Series):
