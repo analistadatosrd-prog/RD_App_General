@@ -19,7 +19,6 @@ st.markdown("---")
 RESPONSABLES_CAMBIO = [
     "andres",
     "coco",
-    # agrega o quita opciones aquí
 ]
 
 COLUMNAS_TABLA = [
@@ -70,6 +69,24 @@ COLUMNAS_TABLA = [
     "ventas_indirectas_resultado",
     "ventas_publicidad_resultado",
     "ventas_organicas_resultado",
+]
+
+KPI_DETALLE = [
+    ("clicks", "Clicks", "num"),
+    ("impresiones", "Impresiones", "num"),
+    ("inversion", "Inversión", "money"),
+    ("ingresos_ads", "Ingresos Ads", "money"),
+    ("ingresos_totales", "Ingresos Totales", "money"),
+    ("ventas_directas", "Ventas Directas", "num"),
+    ("ventas_indirectas", "Ventas Indirectas", "num"),
+    ("ventas_publicidad", "Ventas Publicidad", "num"),
+    ("ventas_organicas", "Ventas Orgánicas", "num"),
+]
+
+KPI_CATEGORIA = [
+    ("ctr", "CTR", "pct", "ctr_categoria"),
+    ("cvr", "CVR", "pct", "cvr_categoria"),
+    ("acos", "ACOS", "pct", "acos_categoria"),
 ]
 
 
@@ -149,6 +166,22 @@ def fmt_pct(value):
         return "-"
 
 
+def fmt_by_type(value, value_type):
+    if value_type == "money":
+        return fmt_money(value)
+    if value_type == "pct":
+        return fmt_pct(value)
+    return fmt_num(value, 0)
+
+
+def pct_change(base, comp):
+    b = safe_float(base)
+    c = safe_float(comp)
+    if b == 0:
+        return None
+    return ((c - b) / b) * 100
+
+
 def aplicar_filtros():
     df = st.session_state.rc_df_base.copy()
 
@@ -218,7 +251,6 @@ def agrupador_publicaciones(df: pd.DataFrame):
         .groupby("id", as_index=False)
         .first()
     )
-
     return base
 
 
@@ -238,9 +270,7 @@ def obtener_eventos_por_id(df: pd.DataFrame, pub_id: str):
     else:
         eventos["fecha_sort"] = pd.NaT
 
-    eventos = eventos.sort_values(["fecha_cambio_sort", "fecha_sort"], ascending=[False, False])
-
-    return eventos
+    return eventos.sort_values(["fecha_cambio_sort", "fecha_sort"], ascending=[False, False])
 
 
 def preparar_insert_desde_registro(registro: dict, fecha_cambio, responsable, cambio_realizado):
@@ -269,7 +299,6 @@ def insertar_copia_con_cambio(registro: dict, fecha_cambio, responsable, cambio_
         INSERT INTO rd_tabla_reporte_cambios ({columnas_sql})
         VALUES ({placeholders})
     """
-
     execute(query, tuple(valores))
 
 
@@ -280,7 +309,6 @@ def convert_df_to_csv(df: pd.DataFrame):
 
 def convert_df_to_excel(df: pd.DataFrame):
     buffer = BytesIO()
-
     try:
         with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name="reporte_cambios")
@@ -290,7 +318,6 @@ def convert_df_to_excel(df: pd.DataFrame):
                 df.to_excel(writer, index=False, sheet_name="reporte_cambios")
         except Exception:
             return None
-
     return buffer.getvalue()
 
 
@@ -326,100 +353,130 @@ def mostrar_resumen_publicacion(row: pd.Series):
             a3.metric("Total", fmt_num(total_ventas, 0))
 
 
-def mostrar_kpis_base(registro: pd.Series):
-    st.markdown("#### KPIs base")
-
-    r1 = st.columns(5)
-    r1[0].metric("Clicks", fmt_num(registro.get("clicks"), 0))
-    r1[1].metric("Impresiones", fmt_num(registro.get("impresiones"), 0))
-    r1[2].metric("Inversión", fmt_money(registro.get("inversion")))
-    r1[3].metric("Ingresos Ads", fmt_money(registro.get("ingresos_ads")))
-    r1[4].metric("Ingresos Totales", fmt_money(registro.get("ingresos_totales")))
-
-    r2 = st.columns(4)
-    r2[0].metric("Ventas Directas", fmt_num(registro.get("ventas_directas"), 0))
-    r2[1].metric("Ventas Indirectas", fmt_num(registro.get("ventas_indirectas"), 0))
-    r2[2].metric("Ventas Publicidad", fmt_num(registro.get("ventas_publicidad"), 0))
-    r2[3].metric("Ventas Orgánicas", fmt_num(registro.get("ventas_organicas"), 0))
+def render_kpi_group(registro: pd.Series, specs, title, suffix=""):
+    with st.container(border=True):
+        st.markdown(f"#### {title}")
+        for key, label, vtype in specs:
+            col_name = f"{key}{suffix}"
+            st.metric(label, fmt_by_type(registro.get(col_name), vtype))
 
 
-def mostrar_vs_categoria(registro: pd.Series):
-    st.markdown("#### Indicadores vs categoría")
+def render_categoria_group(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### KPIs categoría")
+        for key, label, _, categoria_col in KPI_CATEGORIA:
+            st.metric(label, fmt_pct(registro.get(categoria_col)))
 
+
+def render_resultado_group(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### KPIs resultado")
+        for key, label, vtype in KPI_DETALLE:
+            col_name = f"{key}_resultado"
+            st.metric(label, fmt_by_type(registro.get(col_name), vtype))
+
+
+def render_diff_base_vs_categoria(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### Diferencias %")
+        for key, label, _, categoria_col in KPI_CATEGORIA:
+            base_val = registro.get(categoria_col)
+            pub_val = registro.get(key)
+            delta = pct_change(base_val, pub_val)
+
+            if delta is None:
+                st.metric(label, "-", delta="0,00%")
+            else:
+                st.metric(label, fmt_pct(pub_val), delta=f"{delta:.2f}%".replace(".", ","))
+
+
+def render_diff_base_vs_resultado(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### Diferencias %")
+        for key, label, vtype in KPI_DETALLE:
+            base_val = registro.get(key)
+            result_val = registro.get(f"{key}_resultado")
+            delta = pct_change(base_val, result_val)
+
+            if result_val is None or pd.isna(result_val):
+                st.metric(label, "-", delta="0,00%")
+            elif delta is None:
+                st.metric(label, fmt_by_type(result_val, vtype), delta="0,00%")
+            else:
+                st.metric(label, fmt_by_type(result_val, vtype), delta=f"{delta:.2f}%".replace(".", ","))
+
+
+def render_datos_generales(registro: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### Datos generales")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.write(f"**Cuenta:** {registro.get('cuenta', '-')}")
+            st.write(f"**ID:** {registro.get('id', '-')}")
+        with c2:
+            st.write(f"**SKU:** {registro.get('sku', '-')}")
+            st.write(f"**Categoría:** {registro.get('categoria', '-')}")
+        with c3:
+            st.write(f"**Estado publicación:** {registro.get('estado_publicacion', '-')}")
+            st.write(f"**Logística:** {registro.get('logistica', '-')}")
+        with c4:
+            st.write(f"**Campaign Ads:** {registro.get('campaign_ads', '-')}")
+            st.write(f"**Estado Ads:** {registro.get('estado_ads', '-')}")
+
+
+def render_detalle_publicacion(registro: pd.Series):
+    render_datos_generales(registro)
     c1, c2, c3 = st.columns(3)
-    c1.metric("CTR publicación", fmt_pct(registro.get("ctr")))
-    c2.metric("CVR publicación", fmt_pct(registro.get("cvr")))
-    c3.metric("ACOS publicación", fmt_pct(registro.get("acos")))
+    with c1:
+        render_kpi_group(registro, KPI_DETALLE, "KPIs base")
+    with c2:
+        render_categoria_group(registro)
+    with c3:
+        render_diff_base_vs_categoria(registro)
 
-    d1, d2, d3 = st.columns(3)
-    d1.metric("CTR categoría", fmt_pct(registro.get("ctr_categoria")))
-    d2.metric("CVR categoría", fmt_pct(registro.get("cvr_categoria")))
-    d3.metric("ACOS categoría", fmt_pct(registro.get("acos_categoria")))
+
+def render_resumen_medicion(evento: pd.Series):
+    with st.container(border=True):
+        st.markdown("#### Resumen KPI actual")
+        cols = st.columns(4)
+        resumen = [
+            ("Clicks", fmt_num(evento.get("clicks"), 0)),
+            ("Impresiones", fmt_num(evento.get("impresiones"), 0)),
+            ("Ingresos Ads", fmt_money(evento.get("ingresos_ads"))),
+            ("Ingresos Totales", fmt_money(evento.get("ingresos_totales"))),
+        ]
+        for i, (label, value) in enumerate(resumen):
+            cols[i].metric(label, value)
+
+
+def render_evento_en_medicion(evento: pd.Series):
+    st.markdown(f"**Responsable:** {evento.get('responsable', '-')}")
+    st.markdown(f"**Cambio realizado:** {evento.get('cambio_realizado', '-')}")
+    st.markdown(f"**Fecha cambio:** {evento.get('fecha_cambio', '-')}")
+    st.markdown(f"**Fecha resultados:** {evento.get('fecha_resultados', '-')}")
+    render_resumen_medicion(evento)
+
+
+def render_evento_con_resultado(evento: pd.Series):
+    render_datos_generales(evento)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        render_kpi_group(evento, KPI_DETALLE, "KPIs base")
+    with c2:
+        render_resultado_group(evento)
+    with c3:
+        render_diff_base_vs_resultado(evento)
 
 
 def mostrar_evento(evento: pd.Series, idx: int):
     etapa = str(evento.get("etapa_cambio") or "sin cambios").strip().lower()
     titulo = f"Evento {idx + 1} | {evento.get('etapa_cambio', 'sin cambios')} | {evento.get('fecha_cambio', '-')}"
+
     with st.expander(titulo, expanded=False):
-        st.markdown(f"**Responsable:** {evento.get('responsable', '-')}")
-        st.markdown(f"**Cambio realizado:** {evento.get('cambio_realizado', '-')}")
-        st.markdown(f"**Fecha resultados:** {evento.get('fecha_resultados', '-')}")
-
         if etapa == "con resultados":
-            st.markdown("##### Comparativa antes vs después")
-
-            a1, a2, a3, a4 = st.columns(4)
-            a1.metric(
-                "Clicks",
-                fmt_num(evento.get("clicks_resultado"), 0),
-                delta=fmt_num(safe_float(evento.get("clicks_resultado")) - safe_float(evento.get("clicks")), 0),
-            )
-            a2.metric(
-                "Impresiones",
-                fmt_num(evento.get("impresiones_resultado"), 0),
-                delta=fmt_num(safe_float(evento.get("impresiones_resultado")) - safe_float(evento.get("impresiones")), 0),
-            )
-            a3.metric(
-                "Inversión",
-                fmt_money(evento.get("inversion_resultado")),
-                delta=fmt_money(safe_float(evento.get("inversion_resultado")) - safe_float(evento.get("inversion"))),
-            )
-            a4.metric(
-                "Ingresos Ads",
-                fmt_money(evento.get("ingresos_ads_resultado")),
-                delta=fmt_money(safe_float(evento.get("ingresos_ads_resultado")) - safe_float(evento.get("ingresos_ads"))),
-            )
-
-            b1, b2, b3, b4 = st.columns(4)
-            b1.metric(
-                "Ingresos Totales",
-                fmt_money(evento.get("ingresos_totales_resultado")),
-                delta=fmt_money(safe_float(evento.get("ingresos_totales_resultado")) - safe_float(evento.get("ingresos_totales"))),
-            )
-            b2.metric(
-                "Ventas Directas",
-                fmt_num(evento.get("ventas_directas_resultado"), 0),
-                delta=fmt_num(safe_float(evento.get("ventas_directas_resultado")) - safe_float(evento.get("ventas_directas")), 0),
-            )
-            b3.metric(
-                "Ventas Indirectas",
-                fmt_num(evento.get("ventas_indirectas_resultado"), 0),
-                delta=fmt_num(safe_float(evento.get("ventas_indirectas_resultado")) - safe_float(evento.get("ventas_indirectas")), 0),
-            )
-            b4.metric(
-                "Ventas Publicidad",
-                fmt_num(evento.get("ventas_publicidad_resultado"), 0),
-                delta=fmt_num(safe_float(evento.get("ventas_publicidad_resultado")) - safe_float(evento.get("ventas_publicidad")), 0),
-            )
-
-            c1, _ = st.columns(2)
-            c1.metric(
-                "Ventas Orgánicas",
-                fmt_num(evento.get("ventas_organicas_resultado"), 0),
-                delta=fmt_num(safe_float(evento.get("ventas_organicas_resultado")) - safe_float(evento.get("ventas_organicas")), 0),
-            )
+            render_evento_con_resultado(evento)
         else:
-            st.info("Este cambio aún está en medición. Solo se muestra el cambio reportado.")
+            render_evento_en_medicion(evento)
 
 
 init_state()
@@ -477,7 +534,6 @@ with st.container(border=True):
 
 aplicar_filtros()
 df_vista = st.session_state.rc_df_vista
-
 publicaciones = agrupador_publicaciones(df_vista)
 
 m1, m2, m3 = st.columns(3)
@@ -488,17 +544,13 @@ with m2:
 with m3:
     eventos_medibles = 0
     if "etapa_cambio" in df_base.columns:
-        eventos_medibles = len(
-            df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])]
-        )
+        eventos_medibles = len(df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])])
     st.metric("Eventos medibles", eventos_medibles)
 
 st.markdown("### Descargas")
 
 if "etapa_cambio" in df_base.columns:
-    descargable = df_base[
-        df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
-    ].copy()
+    descargable = df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])].copy()
 else:
     descargable = pd.DataFrame()
 
@@ -523,12 +575,7 @@ with x2:
             use_container_width=True,
         )
     else:
-        st.button(
-            "Descargar Excel",
-            disabled=True,
-            use_container_width=True,
-            help="No fue posible generar el archivo Excel.",
-        )
+        st.button("Descargar Excel", disabled=True, use_container_width=True)
 
 st.markdown("---")
 st.markdown("### Publicaciones")
@@ -542,80 +589,66 @@ for idx, row in publicaciones.iterrows():
 
     label = f"{row.get('titulo_meli', '')} | {row.get('id', '')}"
     with st.expander(f"Ver detalle | {label}", expanded=False):
-        k1, k2 = st.columns([2.3, 1.2])
+        tab1, tab2 = st.tabs(["Detalles", "Eventos y cambios"])
 
-        with k1:
-            mostrar_kpis_base(row)
-            mostrar_vs_categoria(row)
+        with tab1:
+            render_detalle_publicacion(row)
 
-        with k2:
-            st.markdown("#### Datos generales")
-            st.markdown(f"**Cuenta:** {row.get('cuenta', '-')}")
-            st.markdown(f"**Estado publicación:** {row.get('estado_publicacion', '-')}")
-            st.markdown(f"**Logística:** {row.get('logistica', '-')}")
-            st.markdown(f"**Campaign Ads:** {row.get('campaign_ads', '-')}")
-            st.markdown(f"**Estado Ads:** {row.get('estado_ads', '-')}")
-            st.markdown(f"**Categoría:** {row.get('categoria', '-')}")
-            st.markdown(f"**Fecha base:** {row.get('fecha', '-')}")
+        with tab2:
+            st.markdown("#### Reportar cambio")
 
-        st.markdown("---")
-        st.markdown("#### Reportar cambio")
+            with st.form(key=f"form_cambio_{idx}"):
+                f1, f2 = st.columns(2)
+                with f1:
+                    fecha_cambio = st.date_input(
+                        "Fecha cambio",
+                        value=pd.Timestamp.today().date(),
+                    )
+                with f2:
+                    responsable = st.selectbox(
+                        "Responsable",
+                        options=RESPONSABLES_CAMBIO,
+                        key=f"responsable_{idx}",
+                    )
 
-        with st.form(key=f"form_cambio_{idx}"):
-            f1, f2 = st.columns(2)
-            with f1:
-                fecha_cambio = st.date_input(
-                    "Fecha cambio",
-                    value=pd.Timestamp.today().date(),
-                    format="YYYY-MM-DD",
-                )
-            with f2:
-                responsable = st.selectbox(
-                    "Responsable",
-                    options=RESPONSABLES_CAMBIO,
-                    key=f"responsable_{idx}",
+                cambio_realizado = st.text_area(
+                    "Cambio realizado",
+                    placeholder="Describe el cambio aplicado a la publicación...",
+                    key=f"cambio_realizado_{idx}",
                 )
 
-            cambio_realizado = st.text_area(
-                "Cambio realizado",
-                placeholder="Describe el cambio aplicado a la publicación...",
-                key=f"cambio_realizado_{idx}",
-            )
+                fecha_resultados = fecha_cambio + timedelta(days=7)
+                st.info(f"Fecha resultados automática: {fecha_resultados}")
 
-            fecha_resultados = fecha_cambio + timedelta(days=7)
-            st.info(f"Fecha resultados automática: {fecha_resultados}")
+                grabar = st.form_submit_button("Grabar cambio", use_container_width=True)
 
-            grabar = st.form_submit_button("Grabar cambio", use_container_width=True)
+                if grabar:
+                    if not cambio_realizado.strip():
+                        st.error("Debes escribir el cambio realizado.")
+                    else:
+                        try:
+                            insertar_copia_con_cambio(
+                                registro=row.to_dict(),
+                                fecha_cambio=fecha_cambio,
+                                responsable=responsable,
+                                cambio_realizado=cambio_realizado.strip(),
+                            )
+                            st.success("Cambio registrado correctamente.")
+                            cargar_datos()
+                            aplicar_filtros()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No fue posible registrar el cambio: {e}")
 
-            if grabar:
-                if not cambio_realizado.strip():
-                    st.error("Debes escribir el cambio realizado.")
-                else:
-                    try:
-                        insertar_copia_con_cambio(
-                            registro=row.to_dict(),
-                            fecha_cambio=fecha_cambio,
-                            responsable=responsable,
-                            cambio_realizado=cambio_realizado.strip(),
-                        )
-                        st.success("Cambio registrado correctamente.")
-                        cargar_datos()
-                        aplicar_filtros()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"No fue posible registrar el cambio: {e}")
+            st.markdown("---")
+            st.markdown("#### Eventos registrados")
 
-        st.markdown("---")
-        st.markdown("#### Eventos de cambios y resultados")
+            eventos = obtener_eventos_por_id(df_base, row.get("id"))
+            if not eventos.empty and "etapa_cambio" in eventos.columns:
+                eventos = eventos[eventos["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])].copy()
 
-        eventos = obtener_eventos_por_id(df_base, row.get("id"))
-        if not eventos.empty and "etapa_cambio" in eventos.columns:
-            eventos = eventos[
-                eventos["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
-            ].copy()
-
-        if eventos.empty:
-            st.caption("Esta publicación aún no tiene eventos registrados.")
-        else:
-            for ev_idx, (_, evento) in enumerate(eventos.iterrows()):
-                mostrar_evento(evento, ev_idx)
+            if eventos.empty:
+                st.caption("Esta publicación aún no tiene eventos registrados.")
+            else:
+                for ev_idx, (_, evento) in enumerate(eventos.iterrows()):
+                    mostrar_evento(evento, ev_idx)
