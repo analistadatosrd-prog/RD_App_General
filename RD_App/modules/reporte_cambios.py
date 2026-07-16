@@ -58,10 +58,9 @@ st.markdown("---")
 RESPONSABLES_CAMBIO = [
     "andres",
     "coco",
-    "monica",
     "valeria",
-    "patricia",
-    "ezequiel"
+    "ezeqiel",
+    "monica"
 ]
 
 COLUMNAS_TABLA = [
@@ -124,8 +123,8 @@ KPI_COMPARACION = [
     ("ctr", "CTR", "pct"),
     ("cvr", "CVR", "pct"),
     ("acos", "ACOS", "pct"),
-    ("ratio_venta_organica", "Ratio Venta Orgánica", "pct"),
-    ("ratio_venta_ads", "Ratio Venta Ads", "pct"),
+    ("ratio_venta_organica", "Ratio Venta Orgánica", "plain"),
+    ("ratio_venta_ads", "Ratio Venta Ads", "plain"),
 ]
 
 
@@ -209,11 +208,22 @@ def fmt_pct(value):
         return "-"
 
 
+def fmt_plain(value, decimals=2):
+    try:
+        if pd.isna(value):
+            return "-"
+        return f"{float(value):,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "-"
+
+
 def fmt_by_type(value, value_type):
     if value_type == "money":
         return fmt_money(value)
     if value_type == "pct":
         return fmt_pct(value)
+    if value_type == "plain":
+        return fmt_plain(value, 2)
     return fmt_num(value, 0)
 
 
@@ -536,8 +546,8 @@ def render_metricas_generales(registro: pd.Series, suffix=""):
 def render_kpis_base(registro: pd.Series):
     with st.container(border=True):
         st.markdown("#### KPIs base")
-        for key, label, _ in KPI_COMPARACION:
-            st.metric(label, fmt_pct(registro.get(key)))
+        for key, label, value_type in KPI_COMPARACION:
+            st.metric(label, fmt_by_type(registro.get(key), value_type))
 
 
 def render_kpis_categoria(registro: pd.Series):
@@ -550,8 +560,8 @@ def render_kpis_categoria(registro: pd.Series):
             "ratio_venta_organica": "ratio_venta_organica_categoria",
             "ratio_venta_ads": "ratio_venta_ads_categoria",
         }
-        for key, label, _ in KPI_COMPARACION:
-            st.metric(label, fmt_pct(registro.get(mapeo[key])))
+        for key, label, value_type in KPI_COMPARACION:
+            st.metric(label, fmt_by_type(registro.get(mapeo[key]), value_type))
 
 
 def render_kpis_resultado(registro: pd.Series):
@@ -564,36 +574,36 @@ def render_kpis_resultado(registro: pd.Series):
             "ratio_venta_organica": "ratio_venta_organica_resultado",
             "ratio_venta_ads": "ratio_venta_ads_resultado",
         }
-        for key, label, _ in KPI_COMPARACION:
-            st.metric(label, fmt_pct(registro.get(mapeo[key])))
+        for key, label, value_type in KPI_COMPARACION:
+            st.metric(label, fmt_by_type(registro.get(mapeo[key]), value_type))
 
 
 def render_vs_categoria(registro: pd.Series):
     with st.container(border=True):
         st.markdown("#### VS")
         pares = [
-            ("CTR", registro.get("ctr_categoria"), registro.get("ctr")),
-            ("CVR", registro.get("cvr_categoria"), registro.get("cvr")),
-            ("ACOS", registro.get("acos_categoria"), registro.get("acos")),
-            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica_categoria"), registro.get("ratio_venta_organica")),
-            ("Ratio Venta Ads", registro.get("ratio_venta_ads_categoria"), registro.get("ratio_venta_ads")),
+            ("CTR", registro.get("ctr_categoria"), registro.get("ctr"), "pct"),
+            ("CVR", registro.get("cvr_categoria"), registro.get("cvr"), "pct"),
+            ("ACOS", registro.get("acos_categoria"), registro.get("acos"), "pct"),
+            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica_categoria"), registro.get("ratio_venta_organica"), "plain"),
+            ("Ratio Venta Ads", registro.get("ratio_venta_ads_categoria"), registro.get("ratio_venta_ads"), "plain"),
         ]
-        for label, base_val, comp_val in pares:
-            render_vs_item(label, fmt_pct(comp_val), pct_change(base_val, comp_val))
+        for label, base_val, comp_val, value_type in pares:
+            render_vs_item(label, fmt_by_type(comp_val, value_type), pct_change(base_val, comp_val))
 
 
 def render_vs_resultado(registro: pd.Series):
     with st.container(border=True):
         st.markdown("#### VS")
         pares = [
-            ("CTR", registro.get("ctr"), registro.get("ctr_resultado")),
-            ("CVR", registro.get("cvr"), registro.get("cvr_resultado")),
-            ("ACOS", registro.get("acos"), registro.get("acos_resultado")),
-            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica"), registro.get("ratio_venta_organica_resultado")),
-            ("Ratio Venta Ads", registro.get("ratio_venta_ads"), registro.get("ratio_venta_ads_resultado")),
+            ("CTR", registro.get("ctr"), registro.get("ctr_resultado"), "pct"),
+            ("CVR", registro.get("cvr"), registro.get("cvr_resultado"), "pct"),
+            ("ACOS", registro.get("acos"), registro.get("acos_resultado"), "pct"),
+            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica"), registro.get("ratio_venta_organica_resultado"), "plain"),
+            ("Ratio Venta Ads", registro.get("ratio_venta_ads"), registro.get("ratio_venta_ads_resultado"), "plain"),
         ]
-        for label, base_val, comp_val in pares:
-            render_vs_item(label, fmt_pct(comp_val), pct_change(base_val, comp_val))
+        for label, base_val, comp_val, value_type in pares:
+            render_vs_item(label, fmt_by_type(comp_val, value_type), pct_change(base_val, comp_val))
 
 
 def render_detalle_publicacion(registro: pd.Series):
