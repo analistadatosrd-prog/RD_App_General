@@ -58,6 +58,10 @@ st.markdown("---")
 RESPONSABLES_CAMBIO = [
     "andres",
     "coco",
+    "monica",
+    "valeria",
+    "patricia",
+    "ezequiel"
 ]
 
 COLUMNAS_TABLA = [
