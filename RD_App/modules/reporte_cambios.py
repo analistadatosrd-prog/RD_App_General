@@ -52,6 +52,10 @@ COLUMNAS_TABLA = [
     "ctr_categoria",
     "cvr_categoria",
     "acos_categoria",
+    "ratio_venta_organica",
+    "ratio_venta_ads",
+    "ratio_venta_organica_categoria",
+    "ratio_venta_ads_categoria",
     "fecha_cambio",
     "responsable",
     "cambio_realizado",
@@ -69,6 +73,8 @@ COLUMNAS_TABLA = [
     "ventas_indirectas_resultado",
     "ventas_publicidad_resultado",
     "ventas_organicas_resultado",
+    "ratio_venta_organica_resultado",
+    "ratio_venta_ads_resultado",
 ]
 
 METRICAS_GENERALES = [
@@ -89,6 +95,8 @@ KPI_COMPARACION = [
     ("ctr", "CTR", "pct"),
     ("cvr", "CVR", "pct"),
     ("acos", "ACOS", "pct"),
+    ("ratio_venta_organica", "Ratio Venta Orgánica", "pct"),
+    ("ratio_venta_ads", "Ratio Venta Ads", "pct"),
 ]
 
 
@@ -424,17 +432,29 @@ def render_kpis_base(registro: pd.Series):
 def render_kpis_categoria(registro: pd.Series):
     with st.container(border=True):
         st.markdown("#### KPIs categoría")
-        st.metric("CTR", fmt_pct(registro.get("ctr_categoria")))
-        st.metric("CVR", fmt_pct(registro.get("cvr_categoria")))
-        st.metric("ACOS", fmt_pct(registro.get("acos_categoria")))
+        mapeo = {
+            "ctr": "ctr_categoria",
+            "cvr": "cvr_categoria",
+            "acos": "acos_categoria",
+            "ratio_venta_organica": "ratio_venta_organica_categoria",
+            "ratio_venta_ads": "ratio_venta_ads_categoria",
+        }
+        for key, label, _ in KPI_COMPARACION:
+            st.metric(label, fmt_pct(registro.get(mapeo[key])))
 
 
 def render_kpis_resultado(registro: pd.Series):
     with st.container(border=True):
         st.markdown("#### KPIs resultado")
-        st.metric("CTR", fmt_pct(registro.get("ctr_resultado")))
-        st.metric("CVR", fmt_pct(registro.get("cvr_resultado")))
-        st.metric("ACOS", fmt_pct(registro.get("acos_resultado")))
+        mapeo = {
+            "ctr": "ctr_resultado",
+            "cvr": "cvr_resultado",
+            "acos": "acos_resultado",
+            "ratio_venta_organica": "ratio_venta_organica_resultado",
+            "ratio_venta_ads": "ratio_venta_ads_resultado",
+        }
+        for key, label, _ in KPI_COMPARACION:
+            st.metric(label, fmt_pct(registro.get(mapeo[key])))
 
 
 def render_vs_categoria(registro: pd.Series):
@@ -444,6 +464,8 @@ def render_vs_categoria(registro: pd.Series):
             ("CTR", registro.get("ctr_categoria"), registro.get("ctr")),
             ("CVR", registro.get("cvr_categoria"), registro.get("cvr")),
             ("ACOS", registro.get("acos_categoria"), registro.get("acos")),
+            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica_categoria"), registro.get("ratio_venta_organica")),
+            ("Ratio Venta Ads", registro.get("ratio_venta_ads_categoria"), registro.get("ratio_venta_ads")),
         ]
         for label, base_val, comp_val in pares:
             delta = pct_change(base_val, comp_val)
@@ -460,6 +482,8 @@ def render_vs_resultado(registro: pd.Series):
             ("CTR", registro.get("ctr"), registro.get("ctr_resultado")),
             ("CVR", registro.get("cvr"), registro.get("cvr_resultado")),
             ("ACOS", registro.get("acos"), registro.get("acos_resultado")),
+            ("Ratio Venta Orgánica", registro.get("ratio_venta_organica"), registro.get("ratio_venta_organica_resultado")),
+            ("Ratio Venta Ads", registro.get("ratio_venta_ads"), registro.get("ratio_venta_ads_resultado")),
         ]
         for label, base_val, comp_val in pares:
             delta = pct_change(base_val, comp_val)
@@ -525,6 +549,18 @@ def asegurar_kpis_resultado(evento: pd.Series):
         inv_r = safe_float(evento.get("inversion_resultado"))
         ing_ads_r = safe_float(evento.get("ingresos_ads_resultado"))
         evento["acos_resultado"] = (inv_r / ing_ads_r * 100) if ing_ads_r > 0 else None
+
+    if "ratio_venta_organica_resultado" not in evento.index or pd.isna(evento.get("ratio_venta_organica_resultado")):
+        vtas_org_r = safe_float(evento.get("ventas_organicas_resultado"))
+        vtas_ads_r = safe_float(evento.get("ventas_publicidad_resultado"))
+        total_r = vtas_org_r + vtas_ads_r
+        evento["ratio_venta_organica_resultado"] = (vtas_org_r / total_r * 100) if total_r > 0 else None
+
+    if "ratio_venta_ads_resultado" not in evento.index or pd.isna(evento.get("ratio_venta_ads_resultado")):
+        vtas_org_r = safe_float(evento.get("ventas_organicas_resultado"))
+        vtas_ads_r = safe_float(evento.get("ventas_publicidad_resultado"))
+        total_r = vtas_org_r + vtas_ads_r
+        evento["ratio_venta_ads_resultado"] = (vtas_ads_r / total_r * 100) if total_r > 0 else None
 
     return evento
 
