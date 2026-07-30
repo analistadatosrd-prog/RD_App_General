@@ -1,5 +1,6 @@
 from io import BytesIO
 from datetime import timedelta
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -52,7 +53,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Reporte de Cambios")
-st.caption("Seguimiento de cambios y comparación antes vs después por publicación.")
+st.caption("Seguimiento de cambios, novedades y comparación antes vs después por publicación.")
 st.markdown("---")
 
 RESPONSABLES_CAMBIO = [
@@ -119,6 +120,9 @@ COLUMNAS_TABLA = [
     "ventas_organicas_resultado",
     "ratio_venta_organica_resultado",
     "ratio_venta_ads_resultado",
+    "fecha_novedad",
+    "novedad",
+    "fecha_revision",
 ]
 
 KPI_COMPARACION = [
@@ -150,6 +154,7 @@ def init_state():
             "etapa_cambio": "Todas",
             "responsable": "Todos",
         },
+        "rc_toasts_hoy_mostrados": set(),
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -161,7 +166,7 @@ def cargar_datos():
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
 
     if not df.empty:
-        for col in ["fecha", "fecha_cambio", "fecha_resultados"]:
+        for col in ["fecha", "fecha_cambio", "fecha_resultados", "fecha_novedad", "fecha_revision"]:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
 
@@ -398,6 +403,34 @@ def obtener_eventos_por_id(df: pd.DataFrame, pub_id: str):
     )
 
 
+def obtener_novedades_por_id(df: pd.DataFrame, pub_id: str):
+    if df.empty or "id" not in df.columns:
+        return pd.DataFrame()
+
+    novedades = df[
+        (df["id"].astype(str) == str(pub_id)) &
+        (df["etapa_cambio"].astype(str).str.lower() == "con novedad")
+    ].copy()
+
+    if novedades.empty:
+        return novedades
+
+    if "fecha_revision" in novedades.columns:
+        novedades["fecha_revision_sort"] = pd.to_datetime(novedades["fecha_revision"], errors="coerce")
+    else:
+        novedades["fecha_revision_sort"] = pd.NaT
+
+    if "fecha_novedad" in novedades.columns:
+        novedades["fecha_novedad_sort"] = pd.to_datetime(novedades["fecha_novedad"], errors="coerce")
+    else:
+        novedades["fecha_novedad_sort"] = pd.NaT
+
+    return novedades.sort_values(
+        ["fecha_revision_sort", "fecha_novedad_sort"],
+        ascending=[True, False]
+    ).reset_index(drop=True)
+
+
 def preparar_insert_desde_registro(registro: dict, fecha_cambio, responsable, cambio_realizado, dias_resultado):
     nuevo = {}
     for col in COLUMNAS_TABLA:
@@ -408,6 +441,42 @@ def preparar_insert_desde_registro(registro: dict, fecha_cambio, responsable, ca
     nuevo["cambio_realizado"] = cambio_realizado
     nuevo["fecha_resultados"] = fecha_cambio + timedelta(days=int(dias_resultado))
     nuevo["etapa_cambio"] = "en medicion"
+
+    nuevo["fecha_novedad"] = None
+    nuevo["novedad"] = None
+    nuevo["fecha_revision"] = None
+
+    return nuevo
+
+
+def preparar_insert_novedad_desde_registro(registro: dict, responsable, novedad, fecha_novedad, fecha_revision):
+    nuevo = {}
+    for col in COLUMNAS_TABLA:
+        nuevo[col] = registro.get(col, None)
+
+    nuevo["responsable"] = responsable
+    nuevo["fecha_novedad"] = fecha_novedad
+    nuevo["novedad"] = novedad
+    nuevo["fecha_revision"] = fecha_revision
+    nuevo["etapa_cambio"] = "con novedad"
+
+    nuevo["fecha_cambio"] = None
+    nuevo["cambio_realizado"] = None
+    nuevo["fecha_resultados"] = None
+
+    nuevo["clicks_resultado"] = None
+    nuevo["impresiones_resultado"] = None
+    nuevo["inversion_resultado"] = None
+    nuevo["ingresos_directos_resultado"] = None
+    nuevo["ingresos_indirectos_resultado"] = None
+    nuevo["ingresos_ads_resultado"] = None
+    nuevo["ingresos_totales_resultado"] = None
+    nuevo["ventas_directas_resultado"] = None
+    nuevo["ventas_indirectas_resultado"] = None
+    nuevo["ventas_publicidad_resultado"] = None
+    nuevo["ventas_organicas_resultado"] = None
+    nuevo["ratio_venta_organica_resultado"] = None
+    nuevo["ratio_venta_ads_resultado"] = None
 
     return nuevo
 
@@ -431,6 +500,61 @@ def insertar_copia_con_cambio(registro: dict, fecha_cambio, responsable, cambio_
         VALUES ({placeholders})
     """
     execute(query, tuple(valores))
+
+
+def insertar_copia_con_novedad(registro: dict, responsable, novedad, fecha_novedad, fecha_revision):
+    data = preparar_insert_novedad_desde_registro(
+        registro=registro,
+        responsable=responsable,
+        novedad=novedad,
+        fecha_novedad=fecha_novedad,
+        fecha_revision=fecha_revision,
+    )
+
+    columnas = list(data.keys())
+    placeholders = ", ".join(["%s"] * len(columnas))
+    columnas_sql = ", ".join(columnas)
+    valores = [data[c] for c in columnas]
+
+    query = f"""
+        INSERT INTO rd_tabla_reporte_cambios ({columnas_sql})
+        VALUES ({placeholders})
+    """
+    execute(query, tuple(valores))
+
+
+def actualizar_novedad(registro_id, responsable, novedad, fecha_revision):
+    query = """
+        UPDATE rd_tabla_reporte_cambios
+        SET responsable = %s,
+            novedad = %s,
+            fecha_revision = %s
+        WHERE id = %s
+          AND etapa_cambio = 'con novedad'
+          AND fecha_novedad IS NOT NULL
+        LIMIT 1
+    """
+    execute(query, (responsable, novedad, fecha_revision, registro_id))
+
+
+def actualizar_novedad_por_pk(pk_value, responsable, novedad, fecha_revision):
+    query = """
+        UPDATE rd_tabla_reporte_cambios
+        SET responsable = %s,
+            novedad = %s,
+            fecha_revision = %s
+        WHERE id = %s
+          AND fecha_novedad = %s
+          AND etapa_cambio = 'con novedad'
+        LIMIT 1
+    """
+    execute(query, (
+        responsable,
+        novedad,
+        fecha_revision,
+        pk_value["id"],
+        pk_value["fecha_novedad"],
+    ))
 
 
 @st.cache_data
@@ -488,6 +612,36 @@ def render_vs_item(label, value, delta, inverse=False):
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
+
+
+def mostrar_toasts_novedades_hoy(df: pd.DataFrame):
+    if df.empty:
+        return
+
+    if "fecha_revision" not in df.columns or "etapa_cambio" not in df.columns:
+        return
+
+    hoy = date.today()
+
+    novedades_hoy = df[
+        (df["etapa_cambio"].astype(str).str.lower() == "con novedad") &
+        (pd.to_datetime(df["fecha_revision"], errors="coerce").dt.date == hoy)
+    ].copy()
+
+    if novedades_hoy.empty:
+        return
+
+    novedades_hoy = novedades_hoy.sort_values(["responsable", "fecha_revision"], ascending=[True, True])
+
+    for _, row in novedades_hoy.iterrows():
+        toast_id = f"{row.get('id','')}|{row.get('responsable','')}|{row.get('novedad','')}|{row.get('fecha_revision','')}"
+        if toast_id not in st.session_state.rc_toasts_hoy_mostrados:
+            st.toast(
+                f"**{row.get('responsable', '-')}:** {row.get('novedad', '-')}",
+                icon="🔔",
+                duration="long",
+            )
+            st.session_state.rc_toasts_hoy_mostrados.add(toast_id)
 
 
 def mostrar_resumen_publicacion(row: pd.Series):
@@ -760,6 +914,58 @@ def mostrar_evento(evento: pd.Series, idx: int):
             render_evento_en_medicion(evento)
 
 
+def render_tabla_novedades(novedades_df: pd.DataFrame, pub_id: str):
+    st.markdown("#### Novedades registradas")
+
+    if novedades_df.empty:
+        st.caption("Esta publicación aún no tiene novedades registradas.")
+        return
+
+    tabla = novedades_df[["id", "responsable", "novedad", "fecha_revision", "fecha_novedad"]].copy()
+    tabla = tabla.rename(columns={
+        "id": "ml_id",
+        "responsable": "responsable",
+        "novedad": "novedad",
+        "fecha_revision": "fecha_revision",
+        "fecha_novedad": "pk_fecha_novedad",
+    })
+
+    edited_df = st.data_editor(
+        tabla,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        key=f"editor_novedades_{pub_id}",
+        column_config={
+            "ml_id": st.column_config.TextColumn("ML ID", disabled=True),
+            "responsable": st.column_config.SelectboxColumn("Responsable", options=RESPONSABLES_CAMBIO),
+            "novedad": st.column_config.TextColumn("Novedad", width="large"),
+            "fecha_revision": st.column_config.DateColumn("Fecha revisión", format="YYYY-MM-DD"),
+            "pk_fecha_novedad": st.column_config.DateColumn("pk_fecha_novedad", disabled=True),
+        },
+        disabled=["ml_id", "pk_fecha_novedad"],
+    )
+
+    if st.button("Guardar edición de novedades", key=f"guardar_novedades_{pub_id}", use_container_width=True):
+        try:
+            for _, fila in edited_df.iterrows():
+                actualizar_novedad_por_pk(
+                    pk_value={
+                        "id": fila["ml_id"],
+                        "fecha_novedad": fila["pk_fecha_novedad"],
+                    },
+                    responsable=fila["responsable"],
+                    novedad=fila["novedad"],
+                    fecha_revision=fila["fecha_revision"],
+                )
+            st.success("Novedades actualizadas correctamente.")
+            cargar_datos()
+            aplicar_filtros()
+            st.rerun()
+        except Exception as e:
+            st.error(f"No fue posible actualizar las novedades: {e}")
+
+
 init_state()
 
 if st.session_state.rc_df_base.empty:
@@ -771,6 +977,8 @@ df_base = st.session_state.rc_df_base
 if df_base.empty:
     st.warning("La tabla rd_tabla_reporte_cambios no tiene datos disponibles.")
     st.stop()
+
+mostrar_toasts_novedades_hoy(df_base)
 
 cuenta_opts = options_from_column(df_base, "cuenta")
 estado_pub_opts = options_from_column(df_base, "estado_publicacion")
@@ -912,15 +1120,15 @@ with m3:
     eventos_medibles = 0
     if "etapa_cambio" in df_base.columns:
         eventos_medibles = len(
-            df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])]
+            df_base[df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados", "con novedad"])]
         )
-    st.metric("Eventos medibles", eventos_medibles)
+    st.metric("Registros con seguimiento", eventos_medibles)
 
 st.markdown("### Descargas")
 
 if "etapa_cambio" in df_base.columns:
     descargable = df_base[
-        df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados"])
+        df_base["etapa_cambio"].astype(str).str.lower().isin(["en medicion", "con resultados", "con novedad"])
     ].copy()
 else:
     descargable = pd.DataFrame()
@@ -930,7 +1138,7 @@ with x1:
     st.download_button(
         "Descargar CSV",
         data=convert_df_to_csv(descargable),
-        file_name="reporte_cambios_eventos.csv",
+        file_name="reporte_cambios_eventos_novedades.csv",
         mime="text/csv",
         use_container_width=True,
     )
@@ -941,7 +1149,7 @@ with x2:
         st.download_button(
             "Descargar Excel",
             data=excel_bytes,
-            file_name="reporte_cambios_eventos.xlsx",
+            file_name="reporte_cambios_eventos_novedades.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
@@ -960,7 +1168,7 @@ for idx, row in publicaciones_visibles.iterrows():
 
     label = f"{row.get('titulo_meli', '')} | {row.get('id', '')}"
     with st.expander(f"Ver detalle | {label}", expanded=False):
-        tab1, tab2 = st.tabs(["Detalles", "Eventos y cambios"])
+        tab1, tab2, tab3 = st.tabs(["Detalles", "Eventos y cambios", "Novedades"])
 
         with tab1:
             render_detalle_publicacion(row)
@@ -1034,3 +1242,57 @@ for idx, row in publicaciones_visibles.iterrows():
             else:
                 for ev_idx, (_, evento) in enumerate(eventos.iterrows()):
                     mostrar_evento(evento, ev_idx)
+
+        with tab3:
+            st.markdown("#### Reportar novedad")
+
+            with st.form(key=f"form_novedad_{idx}"):
+                n1, n2 = st.columns(2)
+                with n1:
+                    responsable_novedad = st.selectbox(
+                        "Responsable",
+                        options=RESPONSABLES_CAMBIO,
+                        key=f"responsable_novedad_{idx}",
+                    )
+                with n2:
+                    fecha_revision = st.date_input(
+                        "Fecha revisión",
+                        value=pd.Timestamp.today().date(),
+                        key=f"fecha_revision_{idx}",
+                    )
+
+                fecha_novedad = pd.Timestamp.today().date()
+
+                novedad_texto = st.text_area(
+                    "Novedad",
+                    placeholder="Describe la novedad reportada...",
+                    key=f"novedad_texto_{idx}",
+                )
+
+                st.info(f"Fecha novedad automática: {fecha_novedad}")
+
+                grabar_novedad = st.form_submit_button("Grabar novedad", use_container_width=True)
+
+                if grabar_novedad:
+                    if not novedad_texto.strip():
+                        st.error("Debes escribir la novedad.")
+                    else:
+                        try:
+                            insertar_copia_con_novedad(
+                                registro=row.to_dict(),
+                                responsable=responsable_novedad,
+                                novedad=novedad_texto.strip(),
+                                fecha_novedad=fecha_novedad,
+                                fecha_revision=fecha_revision,
+                            )
+                            st.success("Novedad registrada correctamente.")
+                            cargar_datos()
+                            aplicar_filtros()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"No fue posible registrar la novedad: {e}")
+
+            st.markdown("---")
+
+            novedades = obtener_novedades_por_id(df_base, row.get("id"))
+            render_tabla_novedades(novedades, str(row.get("id")))
