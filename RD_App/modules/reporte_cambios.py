@@ -63,6 +63,8 @@ RESPONSABLES_CAMBIO = [
     "monica",
 ]
 
+DIAS_RESULTADO_OPCIONES = [7, 15, 30]
+
 COLUMNAS_TABLA = [
     "id",
     "cuenta",
@@ -375,6 +377,11 @@ def obtener_eventos_por_id(df: pd.DataFrame, pub_id: str):
 
     eventos = df[df["id"].astype(str) == str(pub_id)].copy()
 
+    if "fecha_resultados" in eventos.columns:
+        eventos["fecha_resultados_sort"] = pd.to_datetime(eventos["fecha_resultados"], errors="coerce")
+    else:
+        eventos["fecha_resultados_sort"] = pd.NaT
+
     if "fecha_cambio" in eventos.columns:
         eventos["fecha_cambio_sort"] = pd.to_datetime(eventos["fecha_cambio"], errors="coerce")
     else:
@@ -385,10 +392,13 @@ def obtener_eventos_por_id(df: pd.DataFrame, pub_id: str):
     else:
         eventos["fecha_sort"] = pd.NaT
 
-    return eventos.sort_values(["fecha_cambio_sort", "fecha_sort"], ascending=[False, False])
+    return eventos.sort_values(
+        ["fecha_resultados_sort", "fecha_cambio_sort", "fecha_sort"],
+        ascending=[False, False, False]
+    )
 
 
-def preparar_insert_desde_registro(registro: dict, fecha_cambio, responsable, cambio_realizado):
+def preparar_insert_desde_registro(registro: dict, fecha_cambio, responsable, cambio_realizado, dias_resultado):
     nuevo = {}
     for col in COLUMNAS_TABLA:
         nuevo[col] = registro.get(col, None)
@@ -396,14 +406,20 @@ def preparar_insert_desde_registro(registro: dict, fecha_cambio, responsable, ca
     nuevo["fecha_cambio"] = fecha_cambio
     nuevo["responsable"] = responsable
     nuevo["cambio_realizado"] = cambio_realizado
-    nuevo["fecha_resultados"] = fecha_cambio + timedelta(days=7)
+    nuevo["fecha_resultados"] = fecha_cambio + timedelta(days=int(dias_resultado))
     nuevo["etapa_cambio"] = "en medicion"
 
     return nuevo
 
 
-def insertar_copia_con_cambio(registro: dict, fecha_cambio, responsable, cambio_realizado):
-    data = preparar_insert_desde_registro(registro, fecha_cambio, responsable, cambio_realizado)
+def insertar_copia_con_cambio(registro: dict, fecha_cambio, responsable, cambio_realizado, dias_resultado):
+    data = preparar_insert_desde_registro(
+        registro=registro,
+        fecha_cambio=fecha_cambio,
+        responsable=responsable,
+        cambio_realizado=cambio_realizado,
+        dias_resultado=dias_resultado,
+    )
 
     columnas = list(data.keys())
     placeholders = ", ".join(["%s"] * len(columnas))
@@ -735,7 +751,7 @@ def render_evento_con_resultado(evento: pd.Series):
 
 def mostrar_evento(evento: pd.Series, idx: int):
     etapa = str(evento.get("etapa_cambio") or "sin cambios").strip().lower()
-    titulo = f"Evento {idx + 1} | {evento.get('etapa_cambio', 'sin cambios')} | {evento.get('fecha_cambio', '-')}"
+    titulo = f"Evento {idx + 1} | {evento.get('etapa_cambio', 'sin cambios')} | Resultado: {evento.get('fecha_resultados', '-')}"
 
     with st.expander(titulo, expanded=False):
         if etapa == "con resultados":
@@ -953,7 +969,7 @@ for idx, row in publicaciones_visibles.iterrows():
             st.markdown("#### Reportar cambio")
 
             with st.form(key=f"form_cambio_{idx}"):
-                f1, f2 = st.columns(2)
+                f1, f2, f3 = st.columns(3)
                 with f1:
                     fecha_cambio = st.date_input(
                         "Fecha cambio",
@@ -965,6 +981,14 @@ for idx, row in publicaciones_visibles.iterrows():
                         options=RESPONSABLES_CAMBIO,
                         key=f"responsable_{idx}",
                     )
+                with f3:
+                    dias_resultado = st.selectbox(
+                        "Resultado en",
+                        options=DIAS_RESULTADO_OPCIONES,
+                        index=0,
+                        format_func=lambda x: f"{x} días",
+                        key=f"dias_resultado_{idx}",
+                    )
 
                 cambio_realizado = st.text_area(
                     "Cambio realizado",
@@ -972,8 +996,8 @@ for idx, row in publicaciones_visibles.iterrows():
                     key=f"cambio_realizado_{idx}",
                 )
 
-                fecha_resultados = fecha_cambio + timedelta(days=7)
-                st.info(f"Fecha resultados automática: {fecha_resultados}")
+                fecha_resultados = fecha_cambio + timedelta(days=int(dias_resultado))
+                st.info(f"Fecha resultados calculada: {fecha_resultados}")
 
                 grabar = st.form_submit_button("Grabar cambio", use_container_width=True)
 
@@ -987,6 +1011,7 @@ for idx, row in publicaciones_visibles.iterrows():
                                 fecha_cambio=fecha_cambio,
                                 responsable=responsable,
                                 cambio_realizado=cambio_realizado.strip(),
+                                dias_resultado=dias_resultado,
                             )
                             st.success("Cambio registrado correctamente.")
                             cargar_datos()
