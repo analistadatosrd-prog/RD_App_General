@@ -62,6 +62,7 @@ RESPONSABLES_CAMBIO = [
     "valeria",
     "ezeqiel",
     "monica",
+    "pruebas",
 ]
 
 DIAS_RESULTADO_OPCIONES = [7, 15, 30]
