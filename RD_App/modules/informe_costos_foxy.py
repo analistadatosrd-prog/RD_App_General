@@ -17,6 +17,19 @@ ACCOUNT_ID_CUENTAS = {
     "33526": "insuoffice",
     "34398": "tucocina_tufarmacia",
     "33920": "lalu_modernpinup",
+    "33869": "rd_chile",
+    "34372": "rd_mexico",
+}
+
+CREDENCIALES_ADICIONALES = {
+    "rd_chile": {
+        "email": "analista.datoschile@outlook.com",
+        "password": "Data.2025**",
+    },
+    "rd_mexico": {
+        "email": "analista.datosmxn@outlook.com",
+        "password": "Data.2025**",
+    },
 }
 
 COMMON_HEADERS = {
@@ -32,22 +45,42 @@ st.set_page_config(
 )
 
 
-def post_graphql(session, query):
-    payload = {"query": query, "operationName": None}
+def login_graphql(session, email, password):
+    mutation = """
+    mutation Login($email: String!, $password: String!) {
+      login(email: $email, password: $password) {
+        token
+        user {
+          id
+          email
+        }
+      }
+    }
+    """
+    payload = {
+        "query": mutation,
+        "variables": {"email": email, "password": password},
+    }
     resp = session.post(GRAPHQL_URL, data=json.dumps(payload), timeout=TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
     if data.get("errors"):
-        raise ValueError(f"GraphQL error: {data['errors']}")
-    return data
+        raise ValueError(f"GraphQL login error: {data['errors']}")
+    login_data = data.get("data", {}).get("login", {})
+    token = login_data.get("token")
+    if not token:
+        raise ValueError("No se recibió token en la respuesta de login.")
+    return token, login_data
 
 
-def ensure_session_ready(session):
+def ensure_session_ready(session, token=None):
     if session is None:
-        raise ValueError("La sesión de EcomExperts no está disponible.")
+        raise ValueError("La sesión no está disponible.")
 
     try:
         session.headers.update(COMMON_HEADERS)
+        if token:
+            session.headers["Authorization"] = f"Bearer {token}"
         retry = Retry(
             total=4,
             connect=4,
@@ -66,7 +99,17 @@ def ensure_session_ready(session):
     return session
 
 
-def fetch_ml_listings_fast(session, status_callback=None):
+def post_graphql(session, query):
+    payload = {"query": query, "operationName": None}
+    resp = session.post(GRAPHQL_URL, data=json.dumps(payload), timeout=TIMEOUT)
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("errors"):
+        raise ValueError(f"GraphQL error: {data['errors']}")
+    return data
+
+
+def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
     all_rows = []
     current_page = 1
 
@@ -106,6 +149,9 @@ def fetch_ml_listings_fast(session, status_callback=None):
         for listing in listings:
             account_id = str(listing.get("accountId", "") or "")
             if account_id not in ACCOUNT_ID_CUENTAS:
+                continue
+
+            if account_filter and ACCOUNT_ID_CUENTAS.get(account_id) != account_filter:
                 continue
 
             owner = str(listing.get("owner", "") or "")
@@ -459,21 +505,83 @@ def update_status(msg: str):
     st.session_state.foxy_detalle_carga = msg
 
 
+def consultar_datos_con_multiples_sesiones(status_callback=None):
+    """
+    Ejecuta la consulta combinando:
+    - Sesión principal (la que viene del login) para todas las cuentas excepto rd_chile y rd_mexico.
+    - Sesiones adicionales con login interno para rd_chile y rd_mexico.
+    """
+    session_principal = st.session_state.get("ecom_session")
+    if session_principal is None:
+        raise ValueError("La sesión principal de EcomExperts no está disponible.")
+
+    session_principal = ensure_session_ready(session_principal)
+
+    sesiones_por_cuenta = {}
+    errores = []
+
+    for cuenta_key, creds in CREDENCIALES_ADICIONALES.items():
+        try:
+            s = requests.Session()
+            token, _ = login_graphql(s, creds["email"], creds["password"])
+            s = ensure_session_ready(s, token=token)
+            sesiones_por_cuenta[cuenta_key] = s
+        except Exception as e:
+            errores.append(f"Error al autenticar {cuenta_key}: {e}")
+
+    if status_callback:
+        status_callback("Consultando listados (mlListings) para todas las cuentas...")
+
+    df_listings_principal = fetch_ml_listings_fast(
+        session_principal,
+        status_callback=status_callback,
+        account_filter=None,
+    )
+
+    cuentas_principales = set(ACCOUNT_ID_CUENTAS.values()) - set(CREDENCIALES_ADICIONALES.keys())
+    df_listings_principal = df_listings_principal[
+        df_listings_principal["cuenta"].isin(cuentas_principales)
+    ].reset_index(drop=True)
+
+    df_listings_adicionales = []
+    for cuenta_key, session_extra in sesiones_por_cuenta.items():
+        try:
+            if status_callback:
+                status_callback(f"Consultando listados para {cuenta_key}...")
+            df_tmp = fetch_ml_listings_fast(
+                session_extra,
+                status_callback=None,
+                account_filter=cuenta_key,
+            )
+            df_listings_adicionales.append(df_tmp)
+        except Exception as e:
+            errores.append(f"Error al consultar {cuenta_key}: {e}")
+
+    if df_listings_adicionales:
+        df_listings_adicionales = pd.concat(df_listings_adicionales, ignore_index=True)
+    else:
+        df_listings_adicionales = pd.DataFrame(columns=df_listings_principal.columns)
+
+    df_listings = pd.concat([df_listings_principal, df_listings_adicionales], ignore_index=True)
+
+    if status_callback:
+        status_callback("Consultando catálogo de productos (sesión principal)...")
+
+    df_products = fetch_products_fast(session_principal, status_callback=None)
+
+    detalle_df, final_df = build_outputs(df_listings, df_products, status_callback=None)
+
+    return detalle_df, final_df, errores
+
+
 init_state()
 
 st.title("Informe de Costos Foxy")
-st.caption("Consulta costos por MLA y detalle SKU desde EcomExperts.")
+st.caption("Consulta costos por MLA y detalle SKU desde EcomExperts (incluye rd_chile y rd_mexico).")
 
 if not st.session_state.get("authenticated"):
     st.error("No hay una sesión autenticada.")
     st.stop()
-
-session = st.session_state.get("ecom_session")
-if session is None:
-    st.error("La sesión de EcomExperts no está disponible.")
-    st.stop()
-
-session = ensure_session_ready(session)
 
 col1, col2 = st.columns([1, 3])
 
@@ -482,12 +590,9 @@ with col1:
 
     if consultar:
         try:
-            with st.spinner("Consultando información (datos frescos)..."):
+            with st.spinner("Consultando información (datos frescos, múltiples cuentas)..."):
                 t0 = time.time()
-                df_listings = fetch_ml_listings_fast(session, update_status)
-                update_status("Consultando catálogo de productos...")
-                df_products = fetch_products_fast(session, update_status)
-                detalle_df, final_df = build_outputs(df_listings, df_products, update_status)
+                detalle_df, final_df, errores = consultar_datos_con_multiples_sesiones(update_status)
 
                 st.session_state.foxy_df_detalle = detalle_df.copy()
                 st.session_state.foxy_df_final = final_df.copy()
@@ -500,6 +605,10 @@ with col1:
                 apply_filters()
 
             st.success(st.session_state.foxy_status)
+            if errores:
+                st.warning("Se presentaron algunos errores en cuentas adicionales:")
+                for err in errores:
+                    st.caption(err)
         except Exception as e:
             st.session_state.foxy_status = "Error en consulta"
             st.session_state.foxy_detalle_carga = "La carga se interrumpió por un error."
