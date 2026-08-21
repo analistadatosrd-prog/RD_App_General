@@ -9,9 +9,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 GRAPHQL_URL = "https://api.ecomexperts.com/graphql"
-
-# Ajustar solo esta URL si el login real de EcomExperts usa otra ruta.
-# No es una mutación GraphQL: debe ser el endpoint HTTP que crea la cookie/sesión.
 ECOM_LOGIN_URL = "https://app.ecomexperts.com/login"
 
 TIMEOUT = (20, 90)
@@ -111,11 +108,6 @@ def post_graphql(session, query):
 
 
 def extract_token_from_response(response):
-    """
-    Intenta identificar un token si el endpoint REST lo devuelve
-    en JSON, headers o cookies. Si el login autentica solo con cookie,
-    devuelve None y la sesión seguirá siendo válida mediante cookies.
-    """
     possible_header_keys = [
         "Authorization",
         "authorization",
@@ -130,7 +122,7 @@ def extract_token_from_response(response):
     for header_name in possible_header_keys:
         token = response.headers.get(header_name)
         if token:
-            return token
+            return str(token)
 
     try:
         data = response.json()
@@ -167,49 +159,14 @@ def extract_token_from_response(response):
     return None
 
 
-def session_has_auth_cookie(session):
-    """
-    Revisa si el login dejó alguna cookie de sesión/autorización.
-    """
-    if session is None:
-        return False
-
-    cookie_names = {
-        str(cookie.name).lower()
-        for cookie in session.cookies
-    }
-
-    keywords = [
-        "session",
-        "auth",
-        "token",
-        "jwt",
-        "remember",
-        "user",
-    ]
-
-    return any(
-        any(keyword in cookie_name for keyword in keywords)
-        for cookie_name in cookie_names
-    )
-
-
 def login_ecomexperts_rest(email_address, password):
     """
-    Crea una requests.Session independiente y ejecuta el login REST.
+    Autentica contra el login web de EcomExperts.
 
-    Payload enviado:
-    {
-        "User": {
-            "email_address": "...",
-            "password": "..."
-        }
-    }
-
-    Se soportan tres escenarios:
-    1. Login basado en cookie.
-    2. Login basado en token devuelto en JSON.
-    3. Login basado en header Authorization / X-Auth-Token.
+    La respuesta puede devolver JSON con el dashboard bajo la llave `html`,
+    sin token expuesto ni cookie con un nombre identificable. Por eso esta
+    función acepta una respuesta exitosa de login y la sesión se valida
+    luego mediante una consulta real al endpoint GraphQL.
     """
     session = configure_session(requests.Session())
 
@@ -229,6 +186,24 @@ def login_ecomexperts_rest(email_address, password):
 
     response.raise_for_status()
 
+    try:
+        response_data = response.json()
+    except Exception:
+        response_data = {}
+
+    if isinstance(response_data, dict):
+        login_error = response_data.get("error", False)
+        login_success = response_data.get(
+            "success",
+            response_data.get("status", False),
+        )
+
+        if login_error or login_success is False:
+            raise ValueError(
+                f"El login fue rechazado para {email_address}. "
+                f"Respuesta: {response_data}"
+            )
+
     token = extract_token_from_response(response)
 
     if token:
@@ -237,20 +212,33 @@ def login_ecomexperts_rest(email_address, password):
         else:
             session.headers["Authorization"] = f"Bearer {token}"
 
-    if not token and not session_has_auth_cookie(session):
-        try:
-            response_data = response.json()
-        except Exception:
-            response_data = response.text[:500]
-
-        raise ValueError(
-            "El login respondió correctamente, pero no se detectó "
-            "token ni cookie de sesión. "
-            f"URL utilizada: {ECOM_LOGIN_URL}. "
-            f"Respuesta: {response_data}"
-        )
-
     return session
+
+
+def validar_sesion_graphql(session, cuenta):
+    """
+    Valida que la sesión web recién creada tenga permisos sobre GraphQL.
+    Consulta una página mínima del catálogo para no agregar una carga pesada.
+    """
+    query = """
+    query {
+      products {
+        find(page: 1) {
+          data {
+            sku
+          }
+        }
+      }
+    }
+    """
+
+    try:
+        post_graphql(session, query)
+    except Exception as exc:
+        raise ValueError(
+            f"La sesión web de {cuenta} inició correctamente, "
+            f"pero GraphQL no acepta sus credenciales: {exc}"
+        ) from exc
 
 
 def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
@@ -303,7 +291,10 @@ def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
             if account_id not in ACCOUNT_ID_CUENTAS:
                 continue
 
-            cuenta = ACCOUNT_ID_CUENTAS.get(account_id, "sin_clasificar")
+            cuenta = ACCOUNT_ID_CUENTAS.get(
+                account_id,
+                "sin_clasificar",
+            )
 
             if account_filter and cuenta != account_filter:
                 continue
@@ -360,7 +351,10 @@ def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
     df["sku"] = df["sku"].astype(str).str.strip()
     df["mla"] = df["mla"].astype(str).str.strip()
     df["cuenta"] = df["cuenta"].astype(str).str.strip()
-    df["unidades"] = pd.to_numeric(df["unidades"], errors="coerce")
+    df["unidades"] = pd.to_numeric(
+        df["unidades"],
+        errors="coerce",
+    )
 
     return df
 
@@ -430,7 +424,10 @@ def fetch_products_fast(session, status_callback=None):
 
             if variants:
                 costs = [
-                    pd.to_numeric(variant.get("cost"), errors="coerce")
+                    pd.to_numeric(
+                        variant.get("cost"),
+                        errors="coerce",
+                    )
                     for variant in variants
                 ]
                 costs = [cost for cost in costs if pd.notna(cost)]
@@ -541,13 +538,13 @@ def build_outputs(df_listings, df_products, status_callback=None):
         .agg(
             {
                 "unidades": "max",
-                "titulo_producto_base": lambda s: " | ".join(
+                "titulo_producto_base": lambda serie: " | ".join(
                     sorted(
                         set(
                             [
-                                str(value).strip()
-                                for value in s
-                                if str(value).strip()
+                                str(valor).strip()
+                                for valor in serie
+                                if str(valor).strip()
                             ]
                         )
                     )
@@ -621,13 +618,13 @@ def build_outputs(df_listings, df_products, status_callback=None):
         .agg(
             titulo_producto=(
                 "titulo_final",
-                lambda s: " | ".join(
+                lambda serie: " | ".join(
                     sorted(
                         set(
                             [
-                                str(value).strip()
-                                for value in s
-                                if str(value).strip()
+                                str(valor).strip()
+                                for valor in serie
+                                if str(valor).strip()
                             ]
                         )
                     )
@@ -635,13 +632,13 @@ def build_outputs(df_listings, df_products, status_callback=None):
             ),
             skus_asociados=(
                 "sku",
-                lambda s: " | ".join(
+                lambda serie: " | ".join(
                     sorted(
                         set(
                             [
-                                str(value).strip()
-                                for value in s
-                                if str(value).strip()
+                                str(valor).strip()
+                                for valor in serie
+                                if str(valor).strip()
                             ]
                         )
                     )
@@ -817,16 +814,11 @@ def update_status(message: str):
 
 def consultar_datos_con_multiples_sesiones(status_callback=None):
     """
-    Consulta unificada:
+    Consulta las cuatro cuentas de la sesión principal y agrega las
+    consultas internas de rd_chile y rd_mexico.
 
-    - Sesión dejada por el login de la app:
-      rd_argentina, insuoffice, tucocina_tufarmacia, lalu_modernpinup.
-
-    - Sesiones internas REST:
-      rd_chile y rd_mexico.
-
-    Cada sesión consulta su propio catálogo de productos, para que el
-    costo del SKU corresponda a la cuenta donde fue encontrado.
+    Cada sesión consulta su propio catálogo de productos, por lo que el
+    costo asociado al SKU se toma del catálogo correcto de cada cuenta.
     """
     session_principal = st.session_state.get("ecom_session")
 
@@ -841,12 +833,12 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
     bloques_listings = []
     bloques_productos = []
 
-    if status_callback:
-        status_callback(
-            "Consultando listados de cuentas de la sesión principal..."
-        )
-
     try:
+        if status_callback:
+            status_callback(
+                "Consultando listados de cuentas de la sesión principal..."
+            )
+
         listings_principal = fetch_ml_listings_fast(
             session_principal,
             status_callback=status_callback,
@@ -870,7 +862,7 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
             status_callback=None,
         )
 
-        productos_principal["cuenta"] = "__sesion_principal__"
+        productos_principal["catalogo_cuenta"] = "__sesion_principal__"
         bloques_productos.append(productos_principal)
 
     except Exception as exc:
@@ -881,7 +873,9 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
     for cuenta, credenciales in CREDENCIALES_ADICIONALES.items():
         try:
             if status_callback:
-                status_callback(f"Autenticando internamente {cuenta}...")
+                status_callback(
+                    f"Autenticando internamente la cuenta {cuenta}..."
+                )
 
             session_adicional = login_ecomexperts_rest(
                 email_address=credenciales["email_address"],
@@ -889,7 +883,19 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
             )
 
             if status_callback:
-                status_callback(f"Consultando listados de {cuenta}...")
+                status_callback(
+                    f"Validando acceso GraphQL de {cuenta}..."
+                )
+
+            validar_sesion_graphql(
+                session=session_adicional,
+                cuenta=cuenta,
+            )
+
+            if status_callback:
+                status_callback(
+                    f"Consultando listados de {cuenta}..."
+                )
 
             listings_cuenta = fetch_ml_listings_fast(
                 session_adicional,
@@ -897,27 +903,27 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                 account_filter=cuenta,
             )
 
-            if not listings_cuenta.empty:
-                bloques_listings.append(listings_cuenta)
-
-                if status_callback:
-                    status_callback(
-                        f"Consultando catálogo de costos de {cuenta}..."
-                    )
-
-                productos_cuenta = fetch_products_fast(
-                    session_adicional,
-                    status_callback=None,
-                )
-
-                productos_cuenta["cuenta"] = cuenta
-                bloques_productos.append(productos_cuenta)
-
-            else:
+            if listings_cuenta.empty:
                 errores.append(
-                    f"{cuenta}: autenticación correcta, pero no se hallaron "
-                    "listados activos para el account_id configurado."
+                    f"{cuenta}: autenticación correcta, pero no se encontraron "
+                    "listados activos del account_id configurado."
                 )
+                continue
+
+            bloques_listings.append(listings_cuenta)
+
+            if status_callback:
+                status_callback(
+                    f"Consultando catálogo de costos de {cuenta}..."
+                )
+
+            productos_cuenta = fetch_products_fast(
+                session_adicional,
+                status_callback=None,
+            )
+
+            productos_cuenta["catalogo_cuenta"] = cuenta
+            bloques_productos.append(productos_cuenta)
 
         except Exception as exc:
             errores.append(
@@ -956,9 +962,9 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                 ]
             ),
         )
+
         return detalle_vacio, final_vacio, errores
 
-    # Se asigna la llave de catálogo correspondiente a cada cuenta.
     df_listings["catalogo_cuenta"] = df_listings["cuenta"].where(
         df_listings["cuenta"].isin(CREDENCIALES_ADICIONALES.keys()),
         "__sesion_principal__",
@@ -976,30 +982,33 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                 "titulo_catalogo",
                 "costo_unitario",
                 "iva",
-                "cuenta",
+                "catalogo_cuenta",
             ]
         )
 
-    if not df_productos.empty:
-        df_productos["sku"] = (
-            df_productos["sku"]
-            .astype(str)
-            .str.strip()
-        )
+    df_productos["sku"] = (
+        df_productos["sku"]
+        .astype(str)
+        .str.strip()
+    )
 
-        df_productos = (
-            df_productos.groupby(
-                ["cuenta", "sku"],
-                as_index=False,
-            )
-            .agg(
-                {
-                    "titulo_catalogo": "first",
-                    "costo_unitario": "max",
-                    "iva": "max",
-                }
-            )
-            .rename(columns={"cuenta": "catalogo_cuenta"})
+    df_productos = (
+        df_productos.groupby(
+            ["catalogo_cuenta", "sku"],
+            as_index=False,
+        )
+        .agg(
+            {
+                "titulo_catalogo": "first",
+                "costo_unitario": "max",
+                "iva": "max",
+            }
+        )
+    )
+
+    if status_callback:
+        status_callback(
+            "Depurando y cruzando listados con costos por cuenta..."
         )
 
     detalle_bruto = (
@@ -1078,6 +1087,9 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
         .sort_values(["cuenta", "mla", "sku"])
         .reset_index(drop=True)
     )
+
+    if status_callback:
+        status_callback("Construyendo resumen final por cuenta y MLA...")
 
     final_df = (
         detalle_df.groupby(
@@ -1197,6 +1209,7 @@ with col1:
                 st.session_state.foxy_detalle_carga = (
                     "Carga finalizada correctamente."
                 )
+
                 st.session_state.foxy_buscar_titulo = ""
                 st.session_state.foxy_buscar_sku = ""
                 st.session_state.foxy_buscar_mla = ""
