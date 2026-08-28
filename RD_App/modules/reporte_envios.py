@@ -3,7 +3,7 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
-from services.db import fetch_all, execute
+from services.db import execute, fetch_all
 
 
 st.set_page_config(
@@ -38,7 +38,6 @@ DIMENSION_COLUMNS = [
     "valor_reclamar",
 ]
 
-
 EDITABLE_DIMENSIONS = [
     "alto",
     "largo",
@@ -46,14 +45,12 @@ EDITABLE_DIMENSIONS = [
     "peso",
 ]
 
-
 FILTER_TEXT_COLUMNS = [
     "ml_id",
     "titulo_ecom",
     "sku",
     "titulo_meli",
 ]
-
 
 FILTER_MULTI_COLUMNS = [
     "estado_meli",
@@ -70,7 +67,9 @@ def init_state():
         "envios_df_ordenes": pd.DataFrame(),
         "envios_selected_ml_id": None,
         "envios_selected_cuenta": None,
+        "envios_selected_rows": set(),
         "envios_filters_nonce": 0,
+        "envios_editor_nonce": 0,
         "envios_filters": {
             "ml_id": "",
             "titulo_ecom": "",
@@ -87,6 +86,18 @@ def init_state():
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+def registro_key(ml_id, cuenta):
+    return f"{str(ml_id).strip()}|||{str(cuenta).strip()}"
+
+
+def get_selected_rows():
+    return set(st.session_state.envios_selected_rows)
+
+
+def set_selected_rows(selected_rows):
+    st.session_state.envios_selected_rows = set(selected_rows)
 
 
 def load_dimensions():
@@ -107,6 +118,10 @@ def load_dimensions():
                     errors="coerce",
                 )
 
+        for column in DIMENSION_COLUMNS:
+            if column not in df.columns:
+                df[column] = None
+
     st.session_state.envios_df_dimensiones = df
 
 
@@ -120,7 +135,6 @@ def load_orders(ml_id):
         SELECT *
         FROM rd_tabla_ordenes_reclamacion
         WHERE ml_id = %s
-        ORDER BY ml_id
         """,
         (str(ml_id),),
     )
@@ -226,12 +240,6 @@ def update_dimensions(
     ancho,
     peso,
 ):
-    """
-    Actualiza únicamente las dimensiones editables.
-
-    La combinación ml_id + cuenta se utiliza para evitar modificar
-    accidentalmente la publicación equivalente de otra cuenta.
-    """
     alto_value = validate_integer(alto, "Alto")
     largo_value = validate_integer(largo, "Largo")
     ancho_value = validate_integer(ancho, "Ancho")
@@ -258,6 +266,35 @@ def update_dimensions(
             str(cuenta),
         ),
     )
+
+    return {
+        "alto": alto_value,
+        "largo": largo_value,
+        "ancho": ancho_value,
+        "peso": peso_value,
+    }
+
+
+def update_local_dimensions(
+    ml_id,
+    cuenta,
+    dimensions,
+):
+    df = st.session_state.envios_df_dimensiones.copy()
+
+    if df.empty:
+        return
+
+    mask = (
+        df["ml_id"].astype(str) == str(ml_id)
+    ) & (
+        df["cuenta"].astype(str) == str(cuenta)
+    )
+
+    for field, value in dimensions.items():
+        df.loc[mask, field] = value
+
+    st.session_state.envios_df_dimensiones = df
 
 
 def dataframe_to_csv_bytes(df):
@@ -523,6 +560,157 @@ def render_filters(df):
         st.rerun()
 
 
+def render_selected_table(filtered_df):
+    st.subheader("Registros encontrados")
+
+    if filtered_df.empty:
+        st.info(
+            "No hay registros que coincidan con los filtros aplicados."
+        )
+        return pd.DataFrame()
+
+    selected_rows = get_selected_rows()
+
+    visible_columns = [
+        column
+        for column in DIMENSION_COLUMNS
+        if column in filtered_df.columns
+    ]
+
+    selection_df = filtered_df[visible_columns].copy()
+
+    selection_df.insert(
+        0,
+        "_registro_key",
+        selection_df.apply(
+            lambda row: registro_key(
+                row.get("ml_id", ""),
+                row.get("cuenta", ""),
+            ),
+            axis=1,
+        ),
+    )
+
+    selection_df.insert(
+        0,
+        "Seleccionar",
+        selection_df["_registro_key"].isin(selected_rows),
+    )
+
+    st.metric(
+        "Registros filtrados",
+        len(selection_df),
+    )
+
+    action_col_1, action_col_2, action_col_3 = st.columns([1, 1, 2])
+
+    with action_col_1:
+        if st.button(
+            "Seleccionar todos los filtrados",
+            use_container_width=True,
+        ):
+            filtered_keys = set(
+                selection_df["_registro_key"].tolist()
+            )
+
+            set_selected_rows(
+                selected_rows.union(filtered_keys)
+            )
+
+            st.rerun()
+
+    with action_col_2:
+        if st.button(
+            "Limpiar selección",
+            use_container_width=True,
+        ):
+            set_selected_rows(set())
+            st.rerun()
+
+    with action_col_3:
+        selected_count = selection_df["Seleccionar"].sum()
+        st.caption(
+            f"Seleccionados dentro de los filtros actuales: {selected_count}"
+        )
+
+    st.caption(
+        "Marca los registros que deseas editar o consultar. "
+        "Solo los registros seleccionados se cargarán en la sección inferior."
+    )
+
+    editor_nonce = st.session_state.envios_editor_nonce
+
+    edited_df = st.data_editor(
+        selection_df,
+        use_container_width=True,
+        hide_index=True,
+        key=f"envios_selector_{editor_nonce}",
+        column_config={
+            "Seleccionar": st.column_config.CheckboxColumn(
+                "Seleccionar",
+                help=(
+                    "Selecciona este registro para editar dimensiones "
+                    "o consultar sus órdenes."
+                ),
+            ),
+            "_registro_key": None,
+        },
+        disabled=[
+            column
+            for column in selection_df.columns
+            if column not in ["Seleccionar"]
+        ],
+    )
+
+    new_selected_keys = set(
+        edited_df.loc[
+            edited_df["Seleccionar"],
+            "_registro_key",
+        ].astype(str).tolist()
+    )
+
+    filtered_keys = set(
+        selection_df["_registro_key"].astype(str).tolist()
+    )
+
+    selected_rows = (
+        selected_rows - filtered_keys
+    ).union(new_selected_keys)
+
+    set_selected_rows(selected_rows)
+
+    return selection_df
+
+
+def get_selected_records(filtered_df):
+    if filtered_df.empty:
+        return filtered_df.copy()
+
+    selected_rows = get_selected_rows()
+
+    if not selected_rows:
+        return filtered_df.iloc[0:0].copy()
+
+    df = filtered_df.copy()
+
+    df["_registro_key"] = df.apply(
+        lambda row: registro_key(
+            row.get("ml_id", ""),
+            row.get("cuenta", ""),
+        ),
+        axis=1,
+    )
+
+    selected_df = df[
+        df["_registro_key"].isin(selected_rows)
+    ].copy()
+
+    return selected_df.drop(
+        columns=["_registro_key"],
+        errors="ignore",
+    ).reset_index(drop=True)
+
+
 def render_dimension_editor(row, row_index):
     ml_id = row.get("ml_id", "")
     cuenta = row.get("cuenta", "")
@@ -588,7 +776,7 @@ def render_dimension_editor(row, row_index):
 
             if guardar:
                 try:
-                    update_dimensions(
+                    dimensions = update_dimensions(
                         ml_id=ml_id,
                         cuenta=cuenta,
                         alto=alto,
@@ -597,12 +785,15 @@ def render_dimension_editor(row, row_index):
                         peso=peso,
                     )
 
+                    update_local_dimensions(
+                        ml_id=ml_id,
+                        cuenta=cuenta,
+                        dimensions=dimensions,
+                    )
+
                     st.success(
                         f"Dimensiones actualizadas para {ml_id}."
                     )
-
-                    load_dimensions()
-                    st.rerun()
 
                 except Exception as exc:
                     st.error(
@@ -627,7 +818,14 @@ def render_orders_for_record(row, row_index):
         "envios_selected_ml_id"
     )
 
+    selected_cuenta = st.session_state.get(
+        "envios_selected_cuenta"
+    )
+
     if selected_ml_id != ml_id:
+        return
+
+    if selected_cuenta != cuenta:
         return
 
     st.markdown(
@@ -655,39 +853,23 @@ def render_orders_for_record(row, row_index):
     )
 
 
-def render_dimensions_table(filtered_df):
-    if filtered_df.empty:
+def render_selected_actions(selected_df):
+    st.markdown("---")
+    st.subheader("Acciones por registros seleccionados")
+
+    if selected_df.empty:
         st.info(
-            "No hay registros que coincidan con los filtros."
+            "Selecciona uno o más registros en la tabla superior para "
+            "editar dimensiones o consultar órdenes de venta."
         )
         return
 
-    st.subheader("Registros encontrados")
-
-    st.metric(
-        "Registros visibles",
-        len(filtered_df),
+    st.caption(
+        f"Mostrando acciones para {len(selected_df)} "
+        "registro(s) seleccionado(s)."
     )
 
-    visible_columns = [
-        column
-        for column in DIMENSION_COLUMNS
-        if column in filtered_df.columns
-    ]
-
-    display_df = filtered_df[visible_columns].copy()
-
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    st.markdown("### Acciones por registro")
-
-    for row_index, (_, row) in enumerate(
-        filtered_df.iterrows()
-    ):
+    for row_index, (_, row) in enumerate(selected_df.iterrows()):
         ml_id = row.get("ml_id", "")
         cuenta = row.get("cuenta", "")
         titulo = row.get("titulo_meli", "")
@@ -708,6 +890,9 @@ def render_dimensions_table(filtered_df):
             with header_col_3:
                 st.write(
                     f"**Revisión:** {row.get('revision', '')}"
+                )
+                st.write(
+                    f"**Logística:** {row.get('logistica', '')}"
                 )
 
             action_col_1, action_col_2 = st.columns(2)
@@ -730,13 +915,13 @@ def main():
 
     st.title("Reporte de Envíos")
     st.caption(
-        "Consulta, edición y seguimiento de dimensiones "
-        "y órdenes asociadas."
+        "Consulta, edición de dimensiones y seguimiento "
+        "de órdenes asociadas."
     )
 
     if st.session_state.envios_df_dimensiones.empty:
         with st.spinner(
-            "Cargando rd_tabla_dimensiones..."
+            "Cargando información de dimensiones..."
         ):
             load_dimensions()
 
@@ -762,7 +947,11 @@ def main():
 
     st.markdown("---")
 
-    render_dimensions_table(filtered_df)
+    render_selected_table(filtered_df)
+
+    selected_df = get_selected_records(filtered_df)
+
+    render_selected_actions(selected_df)
 
 
 main()
