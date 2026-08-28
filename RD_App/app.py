@@ -55,16 +55,29 @@ def build_navigation():
             title="Reporte de Cambios",
             icon="📝",
         ),
+        st.Page(
+            "modules/reporte_envios.py",
+            title="Reporte de Envíos",
+            icon="🚚",
+        ),
     ]
 
 
 if st.session_state.get("authenticated"):
     with st.sidebar:
         st.markdown("## RD App")
+
         if st.session_state.get("ecom_email"):
-            st.caption(f"Sesión iniciada: {st.session_state['ecom_email']}")
+            st.caption(
+                f"Sesión iniciada: {st.session_state['ecom_email']}"
+            )
+
         st.markdown("---")
-        if st.button("Cerrar sesión", use_container_width=True):
+
+        if st.button(
+            "Cerrar sesión",
+            use_container_width=True,
+        ):
             logout()
 
     pg = st.navigation(
@@ -72,6 +85,8 @@ if st.session_state.get("authenticated"):
         position="sidebar",
         expanded=True,
     )
+
     pg.run()
+
 else:
     login_ecom()
