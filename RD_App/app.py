@@ -29,9 +29,10 @@ for key, value in DEFAULT_SESSION_STATE.items():
 
 def restore_session_if_needed():
     """
-    Recupera la sesión SQL usando el token de la URL.
+    Recupera la sesión persistente desde el token incluido en la URL.
 
-    Si existe token y aún no venció, restaura acceso de RD App.
+    Si el token existe y permanece vigente en rd_sesiones_app,
+    se restaura automáticamente el acceso de RD App.
     """
     if st.session_state.get("authenticated"):
         return
@@ -53,16 +54,16 @@ def restore_session_if_needed():
         session_data["expires_at"]
     )
 
-    # EcomExperts se regenera solo si hace falta.
+    # La sesión de EcomExperts existe en memoria durante la sesión actual.
+    # La sesión de RD App se restaura con la vigencia definida en SQL.
     st.session_state["ecom_session"] = None
 
 
 def preserve_session_token_in_url():
     """
-    Streamlit elimina query params al cambiar de página.
-
-    Esta función los vuelve a insertar en cada rerun mientras
-    la sesión interna siga autenticada.
+    Streamlit puede limpiar los query params al cambiar entre módulos.
+    Esta función vuelve a establecer el token mientras la sesión
+    permanezca autenticada.
     """
     if not st.session_state.get("authenticated"):
         return
@@ -76,6 +77,13 @@ def preserve_session_token_in_url():
 
 
 def logout():
+    """
+    Cierra sesión completamente:
+
+    - Revoca el token en SQL.
+    - Elimina el token de la URL.
+    - Limpia la sesión activa de Streamlit.
+    """
     token = st.session_state.get(
         "persistent_session_token"
     )
@@ -142,15 +150,6 @@ if st.session_state.get("authenticated"):
                 f"Sesión iniciada: {st.session_state['ecom_email']}"
             )
 
-        expires_at = st.session_state.get(
-            "persistent_session_expires_at"
-        )
-
-        if expires_at:
-            st.caption(
-                f"Sesión válida hasta: {expires_at}"
-            )
-
         st.markdown("---")
 
         if st.button(
@@ -158,27 +157,6 @@ if st.session_state.get("authenticated"):
             use_container_width=True,
         ):
             logout()
-
-        with st.expander(
-            "Diagnóstico de sesión",
-            expanded=False,
-        ):
-            token = st.session_state.get(
-                "persistent_session_token"
-            )
-
-            if token:
-                st.code(
-                    f"{token[:12]}...{token[-8:]}",
-                    language=None,
-                )
-            else:
-                st.caption("No hay token persistente.")
-
-            st.write(
-                "Parámetros URL:",
-                dict(st.query_params),
-            )
 
     pg = st.navigation(
         build_navigation(),
