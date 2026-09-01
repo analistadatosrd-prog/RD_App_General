@@ -2,7 +2,6 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
-import extra_streamlit_components as stx
 import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter
@@ -21,16 +20,11 @@ COMMON_HEADERS = {
 
 TIMEOUT = (20, 90)
 
-COOKIE_NAME = "rd_app_session"
-COOKIE_MANAGER_KEY = "rd_app_cookie_manager"
-
 SESSION_DURATION_HOURS = 5
+SESSION_QUERY_PARAM = "rd_session"
 
 
 def build_session() -> requests.Session:
-    """
-    Crea una sesión HTTP configurada para consultar EcomExperts.
-    """
     session = requests.Session()
 
     retry = Retry(
@@ -57,10 +51,6 @@ def build_session() -> requests.Session:
 
 
 def login_session(email: str, password: str) -> requests.Session:
-    """
-    Inicia sesión en EcomExperts y devuelve una requests.Session
-    autenticada con las cookies recibidas.
-    """
     session = build_session()
 
     payload_login = {
@@ -102,47 +92,20 @@ def login_session(email: str, password: str) -> requests.Session:
     return session
 
 
-def get_cookie_manager():
-    """
-    Crea el componente de cookies con una clave estable.
-
-    La clave debe ser siempre la misma para que Streamlit mantenga
-    el componente entre ejecuciones y páginas.
-    """
-    return stx.CookieManager(
-        key=COOKIE_MANAGER_KEY
-    )
-
-
 def utc_now():
-    """
-    Fecha UTC con zona horaria.
-    """
     return datetime.now(timezone.utc)
 
 
 def create_session_token():
-    """
-    Genera un token seguro, aleatorio y sin datos sensibles.
-    """
     return secrets.token_urlsafe(48)
 
 
 def create_persistent_session(email: str):
-    """
-    Crea una sesión persistente de cinco horas:
-
-    - Inserta el token en rd_sesiones_app.
-    - Guarda el token como cookie rd_app_session.
-    - Guarda referencias temporales en st.session_state.
-
-    No guarda contraseñas de EcomExperts.
-    """
     clean_email = str(email or "").strip()
 
     if not clean_email:
         raise ValueError(
-            "No se puede crear una sesión persistente sin un correo."
+            "No se puede crear una sesión persistente sin correo."
         )
 
     token = create_session_token()
@@ -171,17 +134,6 @@ def create_persistent_session(email: str):
         ),
     )
 
-    cookie_manager = get_cookie_manager()
-
-    cookie_manager.set(
-        COOKIE_NAME,
-        token,
-        expires_at=expires_at,
-    )
-
-    st.session_state["persistent_session_token"] = token
-    st.session_state["persistent_session_expires_at"] = expires_at
-
     return {
         "session_token": token,
         "email": clean_email,
@@ -190,56 +142,43 @@ def create_persistent_session(email: str):
     }
 
 
-def get_cookie_state():
+def get_session_token_from_url():
     """
-    Lee la cookie de sesión de RD App.
-
-    Estados:
-    - pending: el componente de cookies aún no cargó en el navegador.
-    - missing: cargó, pero no existe token.
-    - found: la cookie existe y contiene token.
-
-    El estado pending es normal durante la primera ejecución de Streamlit
-    después de abrir una pestaña o actualizar con F5.
+    Lee el token temporal desde el parámetro ?rd_session=...
     """
-    cookie_manager = get_cookie_manager()
+    token = st.query_params.get(
+        SESSION_QUERY_PARAM,
+        None,
+    )
 
+    if isinstance(token, list):
+        return token[0] if token else None
+
+    return str(token).strip() if token else None
+
+
+def set_session_token_in_url(token):
+    """
+    Inserta el token en la URL actual.
+
+    Esto permite que F5, navegación interna y reapertura desde historial
+    preserven la referencia a la sesión hasta su vencimiento.
+    """
+    st.query_params[SESSION_QUERY_PARAM] = token
+
+
+def clear_session_token_from_url():
+    """
+    Elimina el token de sesión de la URL.
+    """
     try:
-        token = cookie_manager.get(COOKIE_NAME)
+        if SESSION_QUERY_PARAM in st.query_params:
+            del st.query_params[SESSION_QUERY_PARAM]
     except Exception:
-        return {
-            "status": "pending",
-            "token": None,
-        }
-
-    if token is None:
-        return {
-            "status": "pending",
-            "token": None,
-        }
-
-    token = str(token).strip()
-
-    if not token:
-        return {
-            "status": "missing",
-            "token": None,
-        }
-
-    return {
-        "status": "found",
-        "token": token,
-    }
+        pass
 
 
 def validate_persistent_session(token):
-    """
-    Busca la sesión en SQL y valida:
-
-    - token existente;
-    - token no revocado;
-    - fecha de vencimiento posterior a NOW().
-    """
     if not token:
         return None
 
@@ -281,21 +220,34 @@ def validate_persistent_session(token):
     return session_data
 
 
-def clear_persistent_cookie():
+def restore_persistent_session():
     """
-    Elimina la cookie local del navegador.
+    Recupera sesión desde el token de la URL.
+
+    Retorna:
+    - None, si no existe parámetro o token inválido.
+    - Diccionario de sesión, si sigue vigente.
     """
-    try:
-        cookie_manager = get_cookie_manager()
-        cookie_manager.delete(COOKIE_NAME)
-    except Exception:
-        pass
+    token = get_session_token_from_url()
+
+    if not token:
+        return None
+
+    session_data = validate_persistent_session(token)
+
+    if not session_data:
+        clear_session_token_from_url()
+        return None
+
+    st.session_state["persistent_session_token"] = token
+    st.session_state["persistent_session_expires_at"] = (
+        session_data["expires_at"]
+    )
+
+    return session_data
 
 
 def revoke_persistent_session(token=None):
-    """
-    Revoca el token en SQL y elimina la cookie del navegador.
-    """
     if token:
         execute(
             """
@@ -307,70 +259,10 @@ def revoke_persistent_session(token=None):
             (str(token),),
         )
 
-    clear_persistent_cookie()
-
-
-def restore_persistent_session():
-    """
-    Restaura una sesión usando la cookie y SQL.
-
-    Retorna un diccionario con uno de estos estados:
-
-    pending:
-        El navegador todavía no terminó de cargar la cookie.
-
-    missing:
-        No hay cookie de sesión.
-
-    invalid:
-        La cookie existe, pero la sesión SQL venció o fue revocada.
-
-    valid:
-        Cookie y sesión SQL correctas.
-    """
-    cookie_state = get_cookie_state()
-
-    if cookie_state["status"] == "pending":
-        return {
-            "status": "pending",
-            "session": None,
-        }
-
-    if cookie_state["status"] == "missing":
-        return {
-            "status": "missing",
-            "session": None,
-        }
-
-    token = cookie_state["token"]
-
-    session_data = validate_persistent_session(token)
-
-    if not session_data:
-        clear_persistent_cookie()
-
-        return {
-            "status": "invalid",
-            "session": None,
-        }
-
-    st.session_state["persistent_session_token"] = token
-    st.session_state["persistent_session_expires_at"] = (
-        session_data.get("expires_at")
-    )
-
-    return {
-        "status": "valid",
-        "session": session_data,
-    }
+    clear_session_token_from_url()
 
 
 def cleanup_old_sessions():
-    """
-    Borra registros de sesiones vencidas hace más de siete días.
-
-    Es una tarea de limpieza, no afecta las sesiones activas.
-    """
     execute(
         """
         DELETE FROM rd_sesiones_app
@@ -380,14 +272,6 @@ def cleanup_old_sessions():
 
 
 def login_ecom():
-    """
-    Renderiza el formulario de login de EcomExperts.
-
-    Al autenticarse correctamente:
-    - crea la sesión de EcomExperts;
-    - crea sesión persistente de RD App por 5 horas;
-    - guarda información temporal en session_state.
-    """
     left, center, right = st.columns([1, 1.15, 1])
 
     with center:
@@ -434,26 +318,25 @@ def login_ecom():
                 )
 
             with st.spinner(
-                "Creando sesión segura de RD App..."
+                "Creando sesión segura de cinco horas..."
             ):
                 persistent_session = create_persistent_session(
                     email=clean_email
                 )
 
-            st.session_state["authenticated"] = True
-            st.session_state["ecom_session"] = ecom_session
-            st.session_state["ecom_email"] = clean_email
-
-            st.session_state["persistent_session_token"] = (
+            set_session_token_in_url(
                 persistent_session["session_token"]
             )
 
+            st.session_state["authenticated"] = True
+            st.session_state["ecom_session"] = ecom_session
+            st.session_state["ecom_email"] = clean_email
+            st.session_state["persistent_session_token"] = (
+                persistent_session["session_token"]
+            )
             st.session_state["persistent_session_expires_at"] = (
                 persistent_session["expires_at"]
             )
-
-            st.session_state["persistent_session_checked"] = True
-            st.session_state["persistent_restore_attempts"] = 0
 
             try:
                 cleanup_old_sessions()
@@ -468,7 +351,6 @@ def login_ecom():
             st.session_state["ecom_email"] = None
             st.session_state["persistent_session_token"] = None
             st.session_state["persistent_session_expires_at"] = None
-            st.session_state["persistent_session_checked"] = True
 
             st.error(
                 f"No fue posible validar las credenciales: {exc}"
