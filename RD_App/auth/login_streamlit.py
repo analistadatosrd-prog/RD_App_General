@@ -272,29 +272,7 @@ def revoke_persistent_session(token=None):
 
 def restore_persistent_session():
     """
-    Intenta restaurar sesión usando cookie + SQL.
-
-    Respuestas posibles:
-
-    {
-        "status": "pending",
-        "session": None
-    }
-
-    {
-        "status": "missing",
-        "session": None
-    }
-
-    {
-        "status": "invalid",
-        "session": None
-    }
-
-    {
-        "status": "valid",
-        "session": {...}
-    }
+    Recupera la sesión persistente desde la cookie y SQL.
     """
     cookie_state = get_cookie_state()
 
@@ -311,7 +289,6 @@ def restore_persistent_session():
         }
 
     token = cookie_state["token"]
-
     session_data = validate_persistent_session(token)
 
     if not session_data:
@@ -324,7 +301,7 @@ def restore_persistent_session():
 
     st.session_state["persistent_session_token"] = token
     st.session_state["persistent_session_expires_at"] = (
-        session_data.get("expires_at")
+        session_data["expires_at"]
     )
 
     return {
