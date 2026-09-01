@@ -1,11 +1,10 @@
-import time
-
 import streamlit as st
 
 from auth.login_streamlit import (
     login_ecom,
     restore_persistent_session,
     revoke_persistent_session,
+    set_url_session_token,
 )
 
 st.set_page_config(
@@ -19,11 +18,8 @@ DEFAULT_SESSION_STATE = {
     "authenticated": False,
     "ecom_session": None,
     "ecom_email": None,
-    "persistent_session_checked": False,
     "persistent_session_token": None,
     "persistent_session_expires_at": None,
-    "persistent_restore_attempts": 0,
-    "persistent_restore_status": "Sin verificar",
 }
 
 for key, value in DEFAULT_SESSION_STATE.items():
@@ -33,74 +29,50 @@ for key, value in DEFAULT_SESSION_STATE.items():
 
 def restore_session_if_needed():
     """
-    Intenta restaurar sesión desde CookieManager + SQL.
+    Recupera la sesión SQL usando el token de la URL.
 
-    La navegación entre módulos conserva st.session_state.
-    Al refrescar o reabrir, la app consulta CookieManager. Como el
-    componente puede cargar con retraso, se realizan algunos reintentos.
+    Si existe token y aún no venció, restaura acceso de RD App.
     """
     if st.session_state.get("authenticated"):
         return
 
-    if st.session_state.get("persistent_session_checked"):
-        return
-
     try:
-        result = restore_persistent_session()
-    except Exception as exc:
-        st.session_state["persistent_restore_status"] = (
-            f"Error restaurando sesión: {exc}"
-        )
-        st.session_state["persistent_session_checked"] = True
-        return
+        session_data = restore_persistent_session()
+    except Exception:
+        session_data = None
 
-    status = result.get("status", "missing")
-    restored_session = result.get("session")
-
-    st.session_state["persistent_restore_status"] = status
-
-    if status == "pending":
-        attempts = int(
-            st.session_state.get(
-                "persistent_restore_attempts",
-                0,
-            )
-        )
-
-        if attempts < 10:
-            st.session_state["persistent_restore_attempts"] = (
-                attempts + 1
-            )
-
-            time.sleep(0.3)
-            st.rerun()
-
-        st.session_state["persistent_session_checked"] = True
-        st.session_state["persistent_restore_status"] = (
-            "No fue posible leer CookieManager después de varios intentos."
-        )
-        return
-
-    st.session_state["persistent_session_checked"] = True
-
-    if status != "valid" or not restored_session:
+    if not session_data:
         return
 
     st.session_state["authenticated"] = True
-    st.session_state["ecom_email"] = restored_session["email"]
+    st.session_state["ecom_email"] = session_data["email"]
     st.session_state["persistent_session_token"] = (
-        restored_session["session_token"]
+        session_data["session_token"]
     )
     st.session_state["persistent_session_expires_at"] = (
-        restored_session["expires_at"]
-    )
-    st.session_state["persistent_restore_status"] = (
-        "Sesión restaurada correctamente."
+        session_data["expires_at"]
     )
 
-    # La sesión de EcomExperts existe mientras vive el proceso actual.
-    # La sesión persistente de RD App se recupera por 5 horas.
+    # EcomExperts se regenera solo si hace falta.
     st.session_state["ecom_session"] = None
+
+
+def preserve_session_token_in_url():
+    """
+    Streamlit elimina query params al cambiar de página.
+
+    Esta función los vuelve a insertar en cada rerun mientras
+    la sesión interna siga autenticada.
+    """
+    if not st.session_state.get("authenticated"):
+        return
+
+    token = st.session_state.get(
+        "persistent_session_token"
+    )
+
+    if token:
+        set_url_session_token(token)
 
 
 def logout():
@@ -118,11 +90,6 @@ def logout():
     st.session_state["ecom_email"] = None
     st.session_state["persistent_session_token"] = None
     st.session_state["persistent_session_expires_at"] = None
-    st.session_state["persistent_session_checked"] = True
-    st.session_state["persistent_restore_attempts"] = 0
-    st.session_state["persistent_restore_status"] = (
-        "Sesión cerrada manualmente."
-    )
 
     st.rerun()
 
@@ -164,15 +131,15 @@ def build_navigation():
 
 
 restore_session_if_needed()
+preserve_session_token_in_url()
 
 if st.session_state.get("authenticated"):
     with st.sidebar:
         st.markdown("## RD App")
 
-        email = st.session_state.get("ecom_email")
-        if email:
+        if st.session_state.get("ecom_email"):
             st.caption(
-                f"Sesión iniciada: {email}"
+                f"Sesión iniciada: {st.session_state['ecom_email']}"
             )
 
         expires_at = st.session_state.get(
@@ -196,20 +163,6 @@ if st.session_state.get("authenticated"):
             "Diagnóstico de sesión",
             expanded=False,
         ):
-            st.write(
-                "Estado:",
-                st.session_state.get(
-                    "persistent_restore_status"
-                ),
-            )
-
-            st.write(
-                "Intentos:",
-                st.session_state.get(
-                    "persistent_restore_attempts"
-                ),
-            )
-
             token = st.session_state.get(
                 "persistent_session_token"
             )
@@ -220,9 +173,12 @@ if st.session_state.get("authenticated"):
                     language=None,
                 )
             else:
-                st.caption(
-                    "No hay token en memoria."
-                )
+                st.caption("No hay token persistente.")
+
+            st.write(
+                "Parámetros URL:",
+                dict(st.query_params),
+            )
 
     pg = st.navigation(
         build_navigation(),
@@ -234,21 +190,3 @@ if st.session_state.get("authenticated"):
 
 else:
     login_ecom()
-
-    with st.expander(
-        "Diagnóstico de sesión",
-        expanded=False,
-    ):
-        st.write(
-            "Estado:",
-            st.session_state.get(
-                "persistent_restore_status"
-            ),
-        )
-
-        st.write(
-            "Intentos:",
-            st.session_state.get(
-                "persistent_restore_attempts"
-            ),
-        )
