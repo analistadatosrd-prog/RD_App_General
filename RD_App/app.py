@@ -33,11 +33,11 @@ for key, value in DEFAULT_SESSION_STATE.items():
 
 def restore_session_if_needed():
     """
-    Recupera la sesión de RD App usando localStorage + SQL.
+    Intenta restaurar sesión desde CookieManager + SQL.
 
-    Mientras el usuario navega entre módulos, Streamlit conserva
-    session_state. Si actualiza con F5 o reabre el navegador, el token
-    se recupera desde localStorage y se valida en rd_sesiones_app.
+    La navegación entre módulos conserva st.session_state.
+    Al refrescar o reabrir, la app consulta CookieManager. Como el
+    componente puede cargar con retraso, se realizan algunos reintentos.
     """
     if st.session_state.get("authenticated"):
         return
@@ -46,7 +46,7 @@ def restore_session_if_needed():
         return
 
     try:
-        restore_result = restore_persistent_session()
+        result = restore_persistent_session()
     except Exception as exc:
         st.session_state["persistent_restore_status"] = (
             f"Error restaurando sesión: {exc}"
@@ -54,8 +54,8 @@ def restore_session_if_needed():
         st.session_state["persistent_session_checked"] = True
         return
 
-    status = restore_result.get("status", "missing")
-    restored_session = restore_result.get("session")
+    status = result.get("status", "missing")
+    restored_session = result.get("session")
 
     st.session_state["persistent_restore_status"] = status
 
@@ -67,16 +67,17 @@ def restore_session_if_needed():
             )
         )
 
-        if attempts < 8:
+        if attempts < 10:
             st.session_state["persistent_restore_attempts"] = (
                 attempts + 1
             )
-            time.sleep(0.25)
+
+            time.sleep(0.3)
             st.rerun()
 
         st.session_state["persistent_session_checked"] = True
         st.session_state["persistent_restore_status"] = (
-            "No fue posible leer localStorage después de varios intentos."
+            "No fue posible leer CookieManager después de varios intentos."
         )
         return
 
@@ -97,9 +98,8 @@ def restore_session_if_needed():
         "Sesión restaurada correctamente."
     )
 
-    # La sesión de requests para EcomExperts existe solo mientras
-    # la instancia Streamlit se mantiene activa. La autenticación
-    # de RD App sí se conserva por cinco horas.
+    # La sesión de EcomExperts existe mientras vive el proceso actual.
+    # La sesión persistente de RD App se recupera por 5 horas.
     st.session_state["ecom_session"] = None
 
 
@@ -169,9 +169,10 @@ if st.session_state.get("authenticated"):
     with st.sidebar:
         st.markdown("## RD App")
 
-        if st.session_state.get("ecom_email"):
+        email = st.session_state.get("ecom_email")
+        if email:
             st.caption(
-                f"Sesión iniciada: {st.session_state['ecom_email']}"
+                f"Sesión iniciada: {email}"
             )
 
         expires_at = st.session_state.get(
@@ -201,6 +202,7 @@ if st.session_state.get("authenticated"):
                     "persistent_restore_status"
                 ),
             )
+
             st.write(
                 "Intentos:",
                 st.session_state.get(
@@ -216,6 +218,10 @@ if st.session_state.get("authenticated"):
                 st.code(
                     f"{token[:12]}...{token[-8:]}",
                     language=None,
+                )
+            else:
+                st.caption(
+                    "No hay token en memoria."
                 )
 
     pg = st.navigation(
@@ -239,6 +245,7 @@ else:
                 "persistent_restore_status"
             ),
         )
+
         st.write(
             "Intentos:",
             st.session_state.get(
