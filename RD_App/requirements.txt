@@ -4,3 +4,4 @@ psycopg2-binary
 passlib[bcrypt]
 bcrypt
 openpyxl
+extra-streamlit-components==0.1.80
