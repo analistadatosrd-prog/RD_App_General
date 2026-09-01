@@ -2,7 +2,6 @@ import json
 import secrets
 from datetime import datetime, timedelta
 
-import extra_streamlit_components as stx
 import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter
@@ -21,10 +20,8 @@ COMMON_HEADERS = {
 
 TIMEOUT = (20, 90)
 
-COOKIE_NAME = "rd_app_session"
-COOKIE_MANAGER_KEY = "rd_app_cookie_manager"
-
 SESSION_DURATION_HOURS = 5
+SESSION_QUERY_PARAM = "rd_session"
 
 
 def build_session() -> requests.Session:
@@ -48,7 +45,6 @@ def build_session() -> requests.Session:
 
     session.mount("https://", adapter)
     session.mount("http://", adapter)
-
     session.headers.update(COMMON_HEADERS)
 
     return session
@@ -96,38 +92,15 @@ def login_session(email: str, password: str) -> requests.Session:
     return session
 
 
-def get_cookie_manager():
-    """
-    CookieManager de extra-streamlit-components.
-
-    La key debe ser fija y única en toda la aplicación.
-    """
-    return stx.CookieManager(
-        key=COOKIE_MANAGER_KEY
-    )
-
-
 def now_local():
-    """
-    Se usa datetime sin zona horaria, compatible con CookieManager.
-    """
     return datetime.now()
 
 
 def create_session_token():
-    """
-    Crea un token seguro y aleatorio.
-    """
     return secrets.token_urlsafe(48)
 
 
 def create_persistent_session(email: str):
-    """
-    Crea un token de sesión temporal en SQL y lo devuelve.
-
-    La cookie se escribe por separado, para que el proceso quede dividido:
-    primero SQL, luego navegador.
-    """
     clean_email = str(email or "").strip()
 
     if not clean_email:
@@ -170,72 +143,35 @@ def create_persistent_session(email: str):
     }
 
 
-def save_session_cookie(token: str, expires_at: datetime):
-    """
-    Guarda el token en una cookie del navegador por cinco horas.
-
-    CookieManager requiere expires_at como datetime sin timezone.
-    """
-    cookie_manager = get_cookie_manager()
-
-    cookie_manager.set(
-        cookie=COOKIE_NAME,
-        val=str(token),
-        expires_at=expires_at,
+def get_url_session_token():
+    token = st.query_params.get(
+        SESSION_QUERY_PARAM,
+        None,
     )
 
-
-def get_cookie_state():
-    """
-    Obtiene el token desde CookieManager.
-
-    Estados:
-    - pending: el componente todavía no terminó de comunicarse con el navegador.
-    - missing: el componente ya respondió pero la cookie no existe.
-    - found: existe token.
-    """
-    cookie_manager = get_cookie_manager()
-
-    try:
-        cookies = cookie_manager.get_all()
-    except Exception:
-        return {
-            "status": "pending",
-            "token": None,
-        }
-
-    if cookies is None:
-        return {
-            "status": "pending",
-            "token": None,
-        }
-
-    token = cookies.get(COOKIE_NAME)
-
-    if token is None:
-        return {
-            "status": "missing",
-            "token": None,
-        }
-
-    token = str(token).strip()
+    if isinstance(token, list):
+        token = token[0] if token else None
 
     if not token:
-        return {
-            "status": "missing",
-            "token": None,
-        }
+        return None
 
-    return {
-        "status": "found",
-        "token": token,
-    }
+    return str(token).strip()
+
+
+def set_url_session_token(token: str):
+    if token:
+        st.query_params[SESSION_QUERY_PARAM] = str(token)
+
+
+def clear_url_session_token():
+    try:
+        if SESSION_QUERY_PARAM in st.query_params:
+            del st.query_params[SESSION_QUERY_PARAM]
+    except Exception:
+        pass
 
 
 def validate_persistent_session(token):
-    """
-    Valida que la sesión exista, esté activa y no haya vencido.
-    """
     if not token:
         return None
 
@@ -277,24 +213,27 @@ def validate_persistent_session(token):
     return session_data
 
 
-def delete_session_cookie():
-    """
-    Elimina la cookie local del navegador.
-    """
-    try:
-        cookie_manager = get_cookie_manager()
+def restore_persistent_session():
+    token = get_url_session_token()
 
-        cookie_manager.delete(
-            cookie=COOKIE_NAME
-        )
-    except Exception:
-        pass
+    if not token:
+        return None
+
+    session_data = validate_persistent_session(token)
+
+    if not session_data:
+        clear_url_session_token()
+        return None
+
+    st.session_state["persistent_session_token"] = token
+    st.session_state["persistent_session_expires_at"] = (
+        session_data["expires_at"]
+    )
+
+    return session_data
 
 
 def revoke_persistent_session(token=None):
-    """
-    Revoca el token de SQL y borra la cookie.
-    """
     if token:
         execute(
             """
@@ -306,54 +245,10 @@ def revoke_persistent_session(token=None):
             (str(token),),
         )
 
-    delete_session_cookie()
-
-
-def restore_persistent_session():
-    """
-    Recupera una sesión usando CookieManager y SQL.
-    """
-    cookie_state = get_cookie_state()
-
-    if cookie_state["status"] == "pending":
-        return {
-            "status": "pending",
-            "session": None,
-        }
-
-    if cookie_state["status"] == "missing":
-        return {
-            "status": "missing",
-            "session": None,
-        }
-
-    token = cookie_state["token"]
-
-    session_data = validate_persistent_session(token)
-
-    if not session_data:
-        delete_session_cookie()
-
-        return {
-            "status": "invalid",
-            "session": None,
-        }
-
-    st.session_state["persistent_session_token"] = token
-    st.session_state["persistent_session_expires_at"] = (
-        session_data.get("expires_at")
-    )
-
-    return {
-        "status": "valid",
-        "session": session_data,
-    }
+    clear_url_session_token()
 
 
 def cleanup_old_sessions():
-    """
-    Elimina sesiones vencidas hace más de siete días.
-    """
     execute(
         """
         DELETE FROM rd_sesiones_app
@@ -409,31 +304,23 @@ def login_ecom():
                 )
 
             with st.spinner(
-                "Creando sesión persistente por cinco horas..."
+                "Creando sesión segura de cinco horas..."
             ):
                 persistent_session = create_persistent_session(
                     email=clean_email
                 )
 
-                save_session_cookie(
-                    token=persistent_session["session_token"],
-                    expires_at=persistent_session["expires_at"],
-                )
+            token = persistent_session["session_token"]
 
             st.session_state["authenticated"] = True
             st.session_state["ecom_session"] = ecom_session
             st.session_state["ecom_email"] = clean_email
-            st.session_state["persistent_session_token"] = (
-                persistent_session["session_token"]
-            )
+            st.session_state["persistent_session_token"] = token
             st.session_state["persistent_session_expires_at"] = (
                 persistent_session["expires_at"]
             )
-            st.session_state["persistent_session_checked"] = True
-            st.session_state["persistent_restore_attempts"] = 0
-            st.session_state["persistent_restore_status"] = (
-                "Sesión creada correctamente."
-            )
+
+            set_url_session_token(token)
 
             try:
                 cleanup_old_sessions()
