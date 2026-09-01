@@ -8,12 +8,14 @@ from auth.login_streamlit import (
     revoke_persistent_session,
 )
 
+
 st.set_page_config(
     page_title="RD App",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
 
 DEFAULT_SESSION_STATE = {
     "authenticated": False,
@@ -32,11 +34,15 @@ for key, value in DEFAULT_SESSION_STATE.items():
 
 def restore_session_if_needed():
     """
-    Intenta recuperar la sesión persistente del navegador.
+    Intenta restaurar la sesión de RD App desde la cookie y SQL.
 
-    La lectura de cookies puede requerir uno o más renders de Streamlit.
-    Por eso, si el estado es pending, se hace rerun antes de concluir
-    que no hay una sesión válida.
+    Se reintenta hasta cinco veces cuando el gestor de cookies todavía
+    está cargando. Esto evita que una recarga F5 se interprete de forma
+    incorrecta como una sesión inexistente.
+
+    No serializamos requests.Session de EcomExperts: dicha sesión vive
+    mientras Streamlit conserva la conexión actual. La autenticación de
+    RD App sí se restaura durante el período de cinco horas.
     """
     if st.session_state.get("authenticated"):
         return
@@ -44,7 +50,14 @@ def restore_session_if_needed():
     if st.session_state.get("persistent_session_checked"):
         return
 
-    restore_result = restore_persistent_session()
+    try:
+        restore_result = restore_persistent_session()
+    except Exception:
+        restore_result = {
+            "status": "missing",
+            "session": None,
+        }
+
     restore_status = restore_result.get("status")
     restored_session = restore_result.get("session")
 
@@ -56,17 +69,14 @@ def restore_session_if_needed():
             )
         )
 
-        if attempts < 3:
+        if attempts < 5:
             st.session_state["persistent_restore_attempts"] = (
                 attempts + 1
             )
 
-            time.sleep(0.2)
+            time.sleep(0.25)
             st.rerun()
 
-        # Después de algunos intentos, no bloqueamos el acceso.
-        # El usuario podrá iniciar sesión manualmente si el navegador
-        # bloqueó cookies o la dependencia no está instalada.
         st.session_state["persistent_session_checked"] = True
         return
 
@@ -84,16 +94,24 @@ def restore_session_if_needed():
         restored_session["expires_at"]
     )
 
-    # La requests.Session de EcomExperts no se puede persistir de forma
-    # segura dentro de una cookie o una tabla SQL. Se crea durante login
-    # y existe mientras la sesión Streamlit actual está activa.
-    #
-    # RD App permanece autenticada con el token SQL por 5 horas.
+    # requests.Session vive en memoria y no debe serializarse ni guardarse
+    # en la tabla SQL. Si se refresca o cierra el navegador, esta variable
+    # queda vacía y los módulos que consultan EcomExperts deberán regenerar
+    # la conexión antes de ejecutar consultas API.
     st.session_state["ecom_session"] = None
 
 
 def logout():
-    token = st.session_state.get("persistent_session_token")
+    """
+    Cierra sesión completamente:
+
+    - revoca el token persistente en rd_sesiones_app;
+    - borra la cookie rd_app_session;
+    - limpia la sesión Streamlit actual.
+    """
+    token = st.session_state.get(
+        "persistent_session_token"
+    )
 
     try:
         revoke_persistent_session(token)
@@ -153,9 +171,10 @@ if st.session_state.get("authenticated"):
     with st.sidebar:
         st.markdown("## RD App")
 
-        if st.session_state.get("ecom_email"):
+        email = st.session_state.get("ecom_email")
+        if email:
             st.caption(
-                f"Sesión iniciada: {st.session_state['ecom_email']}"
+                f"Sesión iniciada: {email}"
             )
 
         expires_at = st.session_state.get(
