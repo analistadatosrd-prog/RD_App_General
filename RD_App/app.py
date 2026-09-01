@@ -1,5 +1,3 @@
-import time
-
 import streamlit as st
 
 from auth.login_streamlit import (
@@ -8,6 +6,7 @@ from auth.login_streamlit import (
     revoke_persistent_session,
 )
 
+
 st.set_page_config(
     page_title="RD App",
     page_icon="📊",
@@ -15,15 +14,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
 DEFAULT_SESSION_STATE = {
     "authenticated": False,
     "ecom_session": None,
     "ecom_email": None,
-    "persistent_session_checked": False,
     "persistent_session_token": None,
     "persistent_session_expires_at": None,
-    "persistent_restore_attempts": 0,
-    "persistent_restore_status": "Sin verificar",
 }
 
 for key, value in DEFAULT_SESSION_STATE.items():
@@ -33,116 +30,51 @@ for key, value in DEFAULT_SESSION_STATE.items():
 
 def restore_session_if_needed():
     """
-    Intenta restaurar la sesión persistente desde una cookie del navegador.
+    Restaura la sesión de RD App desde ?rd_session=TOKEN.
 
-    La lectura inicial de cookies con extra_streamlit_components puede tardar
-    uno o más reruns. Por eso no se interpreta la ausencia inicial de token
-    como logout inmediato.
-
-    Estados posibles:
-    - pending: cookie manager todavía cargando.
-    - missing: no existe cookie en el navegador.
-    - invalid: existe cookie pero token vencido o revocado en SQL.
-    - valid: token vigente y restaurado.
+    Si el token sigue vigente en rd_sesiones_app, se recupera la sesión
+    incluso después de F5 o de volver a abrir la URL desde el historial.
     """
     if st.session_state.get("authenticated"):
         return
 
-    if st.session_state.get("persistent_session_checked"):
-        return
-
     try:
-        restore_result = restore_persistent_session()
-    except Exception as exc:
-        st.session_state["persistent_restore_status"] = (
-            f"Error al leer sesión persistente: {exc}"
-        )
-        st.session_state["persistent_session_checked"] = True
-        return
+        session_data = restore_persistent_session()
+    except Exception:
+        session_data = None
 
-    restore_status = restore_result.get("status", "missing")
-    restored_session = restore_result.get("session")
-
-    st.session_state["persistent_restore_status"] = restore_status
-
-    if restore_status == "pending":
-        attempts = int(
-            st.session_state.get(
-                "persistent_restore_attempts",
-                0,
-            )
-        )
-
-        if attempts < 8:
-            st.session_state["persistent_restore_attempts"] = (
-                attempts + 1
-            )
-
-            time.sleep(0.35)
-            st.rerun()
-
-        st.session_state["persistent_restore_status"] = (
-            "No fue posible leer la cookie después de varios intentos."
-        )
-
-        st.session_state["persistent_session_checked"] = True
-        return
-
-    st.session_state["persistent_session_checked"] = True
-
-    if restore_status != "valid" or not restored_session:
+    if not session_data:
         return
 
     st.session_state["authenticated"] = True
-    st.session_state["ecom_email"] = restored_session["email"]
-
+    st.session_state["ecom_email"] = session_data["email"]
     st.session_state["persistent_session_token"] = (
-        restored_session["session_token"]
+        session_data["session_token"]
     )
-
     st.session_state["persistent_session_expires_at"] = (
-        restored_session["expires_at"]
+        session_data["expires_at"]
     )
 
-    st.session_state["persistent_restore_status"] = (
-        "Sesión restaurada correctamente."
-    )
-
-    # La requests.Session de EcomExperts existe solamente en memoria.
-    # Se pierde al refrescar o cerrar el navegador y no se debe guardar
-    # serializada en SQL/cookies. La sesión de RD App queda restaurada.
+    # La requests.Session de EcomExperts no puede guardarse de manera
+    # segura en URL ni SQL. Esta se debe regenerar si un módulo exige API.
     st.session_state["ecom_session"] = None
 
 
 def logout():
-    """
-    Cierra completamente la sesión del usuario.
-
-    - Revoca el token SQL.
-    - Elimina la cookie del navegador.
-    - Limpia session_state.
-    """
     token = st.session_state.get(
         "persistent_session_token"
     )
 
     try:
         revoke_persistent_session(token)
-    except Exception as exc:
-        st.warning(
-            f"No fue posible revocar la sesión persistente: {exc}"
-        )
+    except Exception:
+        pass
 
     st.session_state["authenticated"] = False
     st.session_state["ecom_session"] = None
     st.session_state["ecom_email"] = None
     st.session_state["persistent_session_token"] = None
     st.session_state["persistent_session_expires_at"] = None
-    st.session_state["persistent_session_checked"] = True
-    st.session_state["persistent_restore_attempts"] = 0
-    st.session_state["persistent_restore_status"] = (
-        "Sesión cerrada manualmente."
-    )
 
     st.rerun()
 
@@ -189,10 +121,9 @@ if st.session_state.get("authenticated"):
     with st.sidebar:
         st.markdown("## RD App")
 
-        email = st.session_state.get("ecom_email")
-        if email:
+        if st.session_state.get("ecom_email"):
             st.caption(
-                f"Sesión iniciada: {email}"
+                f"Sesión iniciada: {st.session_state['ecom_email']}"
             )
 
         expires_at = st.session_state.get(
@@ -212,50 +143,6 @@ if st.session_state.get("authenticated"):
         ):
             logout()
 
-        # Diagnóstico temporal.
-        # Elimina este bloque cuando confirmemos que la persistencia funciona.
-        with st.expander(
-            "Diagnóstico de sesión",
-            expanded=False,
-        ):
-            st.write(
-                "Estado restauración:",
-                st.session_state.get(
-                    "persistent_restore_status"
-                ),
-            )
-
-            st.write(
-                "Intentos de cookie:",
-                st.session_state.get(
-                    "persistent_restore_attempts"
-                ),
-            )
-
-            token = st.session_state.get(
-                "persistent_session_token"
-            )
-
-            if token:
-                st.code(
-                    f"{token[:12]}...{token[-8:]}",
-                    language=None,
-                )
-            else:
-                st.caption(
-                    "No hay token persistente en session_state."
-                )
-
-            try:
-                st.write(
-                    "Cookies detectadas por Streamlit:",
-                    dict(st.context.cookies),
-                )
-            except Exception:
-                st.caption(
-                    "No fue posible leer st.context.cookies."
-                )
-
     pg = st.navigation(
         build_navigation(),
         position="sidebar",
@@ -266,32 +153,3 @@ if st.session_state.get("authenticated"):
 
 else:
     login_ecom()
-
-    # Diagnóstico temporal para el caso de usuario no restaurado.
-    with st.expander(
-        "Diagnóstico de sesión",
-        expanded=False,
-    ):
-        st.write(
-            "Estado restauración:",
-            st.session_state.get(
-                "persistent_restore_status"
-            ),
-        )
-
-        st.write(
-            "Intentos de cookie:",
-            st.session_state.get(
-                "persistent_restore_attempts"
-            ),
-        )
-
-        try:
-            st.write(
-                "Cookies detectadas por Streamlit:",
-                dict(st.context.cookies),
-            )
-        except Exception:
-            st.caption(
-                "No fue posible leer st.context.cookies."
-            )
