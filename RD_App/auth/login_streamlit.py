@@ -167,32 +167,28 @@ def create_persistent_session(email: str):
 
 def get_cookie_state():
     """
-    Retorna:
+    Lee únicamente la cookie rd_app_session.
 
-    - pending: el componente aún está cargando cookies.
-    - missing: el componente ya respondió, pero no existe cookie.
-    - found: existe la cookie y retorna su token.
-
-    extra_streamlit_components puede devolver None durante el primer
-    render porque el componente frontend todavía no cargó.
+    Es más estable que get_all() porque evita depender de la respuesta
+    completa del componente de cookies.
     """
     cookie_manager = get_cookie_manager()
 
     try:
-        all_cookies = cookie_manager.get_all()
+        token = cookie_manager.get(COOKIE_NAME)
     except Exception:
         return {
             "status": "pending",
             "token": None,
         }
 
-    if all_cookies is None:
+    if token is None:
         return {
             "status": "pending",
             "token": None,
         }
 
-    token = all_cookies.get(COOKIE_NAME)
+    token = str(token).strip()
 
     if not token:
         return {
@@ -202,7 +198,7 @@ def get_cookie_state():
 
     return {
         "status": "found",
-        "token": str(token),
+        "token": token,
     }
 
 
