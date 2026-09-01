@@ -1,8 +1,12 @@
+import time
+
 import streamlit as st
 
-from auth.login_streamlit import login_ecom
-from auth.login_streamlit import restore_persistent_session
-from auth.login_streamlit import revoke_persistent_session
+from auth.login_streamlit import (
+    login_ecom,
+    restore_persistent_session,
+    revoke_persistent_session,
+)
 
 st.set_page_config(
     page_title="RD App",
@@ -18,6 +22,7 @@ DEFAULT_SESSION_STATE = {
     "persistent_session_checked": False,
     "persistent_session_token": None,
     "persistent_session_expires_at": None,
+    "persistent_restore_attempts": 0,
 }
 
 for key, value in DEFAULT_SESSION_STATE.items():
@@ -27,48 +32,67 @@ for key, value in DEFAULT_SESSION_STATE.items():
 
 def restore_session_if_needed():
     """
-    Valida una sola vez la cookie persistente del navegador.
+    Intenta recuperar la sesión persistente del navegador.
 
-    Si el usuario vuelve a entrar dentro de la ventana de cinco horas,
-    restaura la autenticación de RD App sin pedirle usuario y contraseña.
+    La lectura de cookies puede requerir uno o más renders de Streamlit.
+    Por eso, si el estado es pending, se hace rerun antes de concluir
+    que no hay una sesión válida.
     """
+    if st.session_state.get("authenticated"):
+        return
+
     if st.session_state.get("persistent_session_checked"):
+        return
+
+    restore_result = restore_persistent_session()
+    restore_status = restore_result.get("status")
+    restored_session = restore_result.get("session")
+
+    if restore_status == "pending":
+        attempts = int(
+            st.session_state.get(
+                "persistent_restore_attempts",
+                0,
+            )
+        )
+
+        if attempts < 3:
+            st.session_state["persistent_restore_attempts"] = (
+                attempts + 1
+            )
+
+            time.sleep(0.2)
+            st.rerun()
+
+        # Después de algunos intentos, no bloqueamos el acceso.
+        # El usuario podrá iniciar sesión manualmente si el navegador
+        # bloqueó cookies o la dependencia no está instalada.
+        st.session_state["persistent_session_checked"] = True
         return
 
     st.session_state["persistent_session_checked"] = True
 
-    if st.session_state.get("authenticated"):
-        return
-
-    try:
-        persistent_session = restore_persistent_session()
-    except Exception:
-        persistent_session = None
-
-    if not persistent_session:
+    if restore_status != "valid" or not restored_session:
         return
 
     st.session_state["authenticated"] = True
-    st.session_state["ecom_email"] = persistent_session["email"]
+    st.session_state["ecom_email"] = restored_session["email"]
+    st.session_state["persistent_session_token"] = (
+        restored_session["session_token"]
+    )
+    st.session_state["persistent_session_expires_at"] = (
+        restored_session["expires_at"]
+    )
 
-    # La sesión requests.Session de EcomExperts no se puede guardar
-    # directamente en SQL ni serializar de forma segura.
+    # La requests.Session de EcomExperts no se puede persistir de forma
+    # segura dentro de una cookie o una tabla SQL. Se crea durante login
+    # y existe mientras la sesión Streamlit actual está activa.
     #
-    # Por eso, al volver a abrir la página se restaura la sesión interna
-    # de RD App, pero ecom_session debe regenerarse si algún módulo
-    # requiere conectarse a EcomExperts.
-    #
-    # Por ahora queda vacía hasta agregar restauración específica:
+    # RD App permanece autenticada con el token SQL por 5 horas.
     st.session_state["ecom_session"] = None
 
 
 def logout():
-    """
-    Cierra de manera completa:
-    - revoca el token persistente en SQL;
-    - elimina la cookie del navegador;
-    - limpia la sesión actual de Streamlit.
-    """
     token = st.session_state.get("persistent_session_token")
 
     try:
@@ -82,6 +106,7 @@ def logout():
     st.session_state["persistent_session_token"] = None
     st.session_state["persistent_session_expires_at"] = None
     st.session_state["persistent_session_checked"] = True
+    st.session_state["persistent_restore_attempts"] = 0
 
     st.rerun()
 
