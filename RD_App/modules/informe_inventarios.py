@@ -1,13 +1,15 @@
 import io
+
 import pandas as pd
 import streamlit as st
 
 from services.db import fetch_all
 
+
 st.set_page_config(
     page_title="Informe de inventarios",
     page_icon="📦",
-    layout="wide"
+    layout="wide",
 )
 
 st.markdown("""
@@ -208,28 +210,44 @@ def fmt_number(value, decimals=0):
     try:
         if decimals == 0:
             return f"{float(value):,.0f}".replace(",", ".")
-        return f"{float(value):,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+        return (
+            f"{float(value):,.{decimals}f}"
+            .replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
+        )
     except Exception:
         return "0"
 
 
 def find_col(df, candidates):
-    cols_lower = {c.lower(): c for c in df.columns}
+    cols_lower = {
+        column.lower(): column
+        for column in df.columns
+    }
+
     for candidate in candidates:
         if candidate.lower() in cols_lower:
             return cols_lower[candidate.lower()]
+
     return None
 
 
 def to_numeric_safe(series):
-    return pd.to_numeric(series, errors="coerce").fillna(0)
+    return pd.to_numeric(
+        series,
+        errors="coerce",
+    ).fillna(0)
 
 
 def build_quiebre_status(valor):
     if valor < 30:
         return "⚠️ Quiebre próximo", "status-red"
-    elif valor <= 60:
+
+    if valor <= 60:
         return "🟡 Estable", "status-yellow"
+
     return "✅ Quiebre alto", "status-green"
 
 
@@ -242,12 +260,13 @@ def render_card(title, value, subtext=""):
             <div class="inv-card-sub">{subtext}</div>
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
 
 def render_status_card(title, promedio_quiebre):
     texto, clase = build_quiebre_status(promedio_quiebre)
+
     st.markdown(
         f"""
         <div class="inv-card">
@@ -258,7 +277,7 @@ def render_status_card(title, promedio_quiebre):
             </div>
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
 
@@ -268,16 +287,17 @@ def cargar_datos():
         "informe_inventarios",
     ]
 
-    errores = []
-
     for tabla in tablas_candidatas:
         try:
-            rows = fetch_all(f"SELECT * FROM {tabla}")
+            rows = fetch_all(
+                f"SELECT * FROM {tabla}"
+            )
+
             if rows:
                 df = pd.DataFrame(rows)
                 return df, tabla
-        except Exception as e:
-            errores.append(f"{tabla}: {type(e).__name__}")
+
+        except Exception:
             continue
 
     return pd.DataFrame(), None
@@ -295,94 +315,339 @@ if st.session_state.inv_base.empty:
         st.session_state.inv_filtrado = df_cargado.copy()
         st.session_state.inv_source_table = tabla_origen
     else:
-        st.error("No se pudieron cargar datos de inventario desde PostgreSQL.")
+        st.error(
+            "No se pudieron cargar datos de inventario desde PostgreSQL."
+        )
         st.stop()
 
-tabla_mostrada = st.session_state.get("inv_source_table") or "rd_tabla_inventarios"
+tabla_mostrada = (
+    st.session_state.get("inv_source_table")
+    or "rd_tabla_inventarios"
+)
+
 st.markdown(
-    f'<div class="source-text">Fuente: PostgreSQL | tabla {tabla_mostrada}</div>',
-    unsafe_allow_html=True
+    f"""
+    <div class="source-text">
+        Fuente: PostgreSQL | tabla {tabla_mostrada}
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 df_base = st.session_state.inv_base.copy()
 
-col_cuenta = find_col(df_base, ["cuenta"])
-col_sku = find_col(df_base, ["sku"])
-col_titulo = find_col(df_base, ["titulo", "titulo_ecom", "tituloecom"])
-col_sku_variante = find_col(df_base, ["sku_variante", "skuvariante"])
+col_cuenta = find_col(
+    df_base,
+    ["cuenta"],
+)
 
-col_stock = find_col(df_base, ["stock_disponible", "stockdisponible"])
-col_costo = find_col(df_base, ["costo_fijo", "costofijo"])
-col_stock_valorizado = find_col(df_base, ["stock_valorizado", "stockvalorizado"])
+col_sku = find_col(
+    df_base,
+    ["sku"],
+)
 
-col_valor_venta_7 = find_col(df_base, ["valor_venta_7_dias", "valorventa7dias"])
-col_und_7 = find_col(df_base, ["und_vendidas_7_dias", "undvendidas7dias"])
-col_quiebre_7 = find_col(df_base, ["quiebre_stock_7_dias", "quiebrestock7dias"])
+col_titulo = find_col(
+    df_base,
+    [
+        "titulo",
+        "titulo_ecom",
+        "tituloecom",
+    ],
+)
 
-col_valor_venta_30 = find_col(df_base, ["valor_venta_30_dias", "valorventa30dias"])
-col_und_30 = find_col(df_base, ["und_vendidas_30_dias", "undvendidas30dias"])
-col_quiebre_30 = find_col(df_base, ["quiebre_stock_30_dias", "quiebrestock30dias"])
+col_sku_variante = find_col(
+    df_base,
+    [
+        "sku_variante",
+        "skuvariante",
+    ],
+)
+
+col_stock = find_col(
+    df_base,
+    [
+        "stock_disponible",
+        "stockdisponible",
+    ],
+)
+
+col_costo = find_col(
+    df_base,
+    [
+        "costo_fijo",
+        "costofijo",
+    ],
+)
+
+col_stock_valorizado = find_col(
+    df_base,
+    [
+        "stock_valorizado",
+        "stockvalorizado",
+    ],
+)
+
+col_stock_volumetrico = find_col(
+    df_base,
+    [
+        "stock_volumetrico",
+        "stockvolumetrico",
+    ],
+)
+
+col_valor_venta_7 = find_col(
+    df_base,
+    [
+        "valor_venta_7_dias",
+        "valorventa7dias",
+    ],
+)
+
+col_und_7 = find_col(
+    df_base,
+    [
+        "und_vendidas_7_dias",
+        "undvendidas7dias",
+    ],
+)
+
+col_quiebre_7 = find_col(
+    df_base,
+    [
+        "quiebre_stock_7_dias",
+        "quiebrestock7dias",
+    ],
+)
+
+col_valor_venta_30 = find_col(
+    df_base,
+    [
+        "valor_venta_30_dias",
+        "valorventa30dias",
+    ],
+)
+
+col_und_30 = find_col(
+    df_base,
+    [
+        "und_vendidas_30_dias",
+        "undvendidas30dias",
+    ],
+)
+
+col_quiebre_30 = find_col(
+    df_base,
+    [
+        "quiebre_stock_30_dias",
+        "quiebrestock30dias",
+    ],
+)
 
 df_vista = st.session_state.inv_filtrado.copy()
 
-stock_total = to_numeric_safe(df_vista[col_stock]).sum() if col_stock else 0
-costo_stock = (to_numeric_safe(df_vista[col_stock]) * to_numeric_safe(df_vista[col_costo])).sum() if col_stock and col_costo else 0
-stock_valorizado = to_numeric_safe(df_vista[col_stock_valorizado]).sum() if col_stock_valorizado else 0
+stock_total = (
+    to_numeric_safe(df_vista[col_stock]).sum()
+    if col_stock
+    else 0
+)
 
-valor_vendido_7 = to_numeric_safe(df_vista[col_valor_venta_7]).sum() if col_valor_venta_7 else 0
-und_vendidas_7 = to_numeric_safe(df_vista[col_und_7]).sum() if col_und_7 else 0
-prom_dia_7 = und_vendidas_7 / 7 if und_vendidas_7 else 0
-quiebre_7_prom = to_numeric_safe(df_vista[col_quiebre_7]).mean() if col_quiebre_7 and len(df_vista) > 0 else 0
+costo_stock = (
+    to_numeric_safe(df_vista[col_stock])
+    * to_numeric_safe(df_vista[col_costo])
+).sum() if col_stock and col_costo else 0
 
-valor_vendido_30 = to_numeric_safe(df_vista[col_valor_venta_30]).sum() if col_valor_venta_30 else 0
-und_vendidas_30 = to_numeric_safe(df_vista[col_und_30]).sum() if col_und_30 else 0
-prom_dia_30 = und_vendidas_30 / 30 if und_vendidas_30 else 0
-quiebre_30_prom = to_numeric_safe(df_vista[col_quiebre_30]).mean() if col_quiebre_30 and len(df_vista) > 0 else 0
+stock_valorizado = (
+    to_numeric_safe(df_vista[col_stock_valorizado]).sum()
+    if col_stock_valorizado
+    else 0
+)
 
-st.markdown('<div class="section-title">Resumen visual</div>', unsafe_allow_html=True)
+stock_volumetrico = (
+    to_numeric_safe(df_vista[col_stock_volumetrico]).sum()
+    if col_stock_volumetrico
+    else 0
+)
 
-r1c1, r1c2, r1c3 = st.columns(3)
+valor_vendido_7 = (
+    to_numeric_safe(df_vista[col_valor_venta_7]).sum()
+    if col_valor_venta_7
+    else 0
+)
+
+und_vendidas_7 = (
+    to_numeric_safe(df_vista[col_und_7]).sum()
+    if col_und_7
+    else 0
+)
+
+prom_dia_7 = (
+    und_vendidas_7 / 7
+    if und_vendidas_7
+    else 0
+)
+
+quiebre_7_prom = (
+    to_numeric_safe(df_vista[col_quiebre_7]).mean()
+    if col_quiebre_7 and len(df_vista) > 0
+    else 0
+)
+
+valor_vendido_30 = (
+    to_numeric_safe(df_vista[col_valor_venta_30]).sum()
+    if col_valor_venta_30
+    else 0
+)
+
+und_vendidas_30 = (
+    to_numeric_safe(df_vista[col_und_30]).sum()
+    if col_und_30
+    else 0
+)
+
+prom_dia_30 = (
+    und_vendidas_30 / 30
+    if und_vendidas_30
+    else 0
+)
+
+quiebre_30_prom = (
+    to_numeric_safe(df_vista[col_quiebre_30]).mean()
+    if col_quiebre_30 and len(df_vista) > 0
+    else 0
+)
+
+st.markdown(
+    '<div class="section-title">Resumen visual</div>',
+    unsafe_allow_html=True,
+)
+
+r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+
 with r1c1:
-    render_card("Stock total", fmt_number(stock_total), "Suma del stock")
-with r1c2:
-    render_card("Costo stock", fmt_money(costo_stock), "Suma de stock * costo_fijo")
-with r1c3:
-    render_card("Stock valorizado", fmt_money(stock_valorizado), "Suma de stock valorizado")
+    render_card(
+        "Stock total",
+        fmt_number(stock_total),
+        "Suma del stock",
+    )
 
-st.markdown('<div class="kpi-row-gap"></div>', unsafe_allow_html=True)
+with r1c2:
+    render_card(
+        "Costo stock",
+        fmt_money(costo_stock),
+        "Suma de stock * costo_fijo",
+    )
+
+with r1c3:
+    render_card(
+        "Stock valorizado",
+        fmt_money(stock_valorizado),
+        "Suma de stock valorizado",
+    )
+
+with r1c4:
+    render_card(
+        "Stock volumétrico",
+        fmt_number(stock_volumetrico),
+        "Suma de stock volumétrico",
+    )
+
+st.markdown(
+    '<div class="kpi-row-gap"></div>',
+    unsafe_allow_html=True,
+)
 
 r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-with r2c1:
-    render_card("Valor vendido 7 días", fmt_money(valor_vendido_7), "Total valor vendido últimos 7 días")
-with r2c2:
-    render_card("Und vendidas 7 días", fmt_number(und_vendidas_7), "Suma de unidades vendidas")
-with r2c3:
-    render_card("Prom ventas * día 7", fmt_number(prom_dia_7, 2), "und vendidas 7 días / 7")
-with r2c4:
-    render_status_card("Quiebre stock 7 días", quiebre_7_prom)
 
-st.markdown('<div class="kpi-row-gap"></div>', unsafe_allow_html=True)
+with r2c1:
+    render_card(
+        "Valor vendido 7 días",
+        fmt_money(valor_vendido_7),
+        "Total valor vendido últimos 7 días",
+    )
+
+with r2c2:
+    render_card(
+        "Und vendidas 7 días",
+        fmt_number(und_vendidas_7),
+        "Suma de unidades vendidas",
+    )
+
+with r2c3:
+    render_card(
+        "Prom ventas * día 7",
+        fmt_number(prom_dia_7, 2),
+        "und vendidas 7 días / 7",
+    )
+
+with r2c4:
+    render_status_card(
+        "Quiebre stock 7 días",
+        quiebre_7_prom,
+    )
+
+st.markdown(
+    '<div class="kpi-row-gap"></div>',
+    unsafe_allow_html=True,
+)
 
 r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+
 with r3c1:
-    render_card("Valor vendido 30 días", fmt_money(valor_vendido_30), "Total valor vendido últimos 30 días")
+    render_card(
+        "Valor vendido 30 días",
+        fmt_money(valor_vendido_30),
+        "Total valor vendido últimos 30 días",
+    )
+
 with r3c2:
-    render_card("Und vendidas 30 días", fmt_number(und_vendidas_30), "Suma de unidades vendidas")
+    render_card(
+        "Und vendidas 30 días",
+        fmt_number(und_vendidas_30),
+        "Suma de unidades vendidas",
+    )
+
 with r3c3:
-    render_card("Prom ventas * día 30", fmt_number(prom_dia_30, 2), "und vendidas 30 días / 30")
+    render_card(
+        "Prom ventas * día 30",
+        fmt_number(prom_dia_30, 2),
+        "und vendidas 30 días / 30",
+    )
+
 with r3c4:
-    render_status_card("Quiebre stock 30 días", quiebre_30_prom)
+    render_status_card(
+        "Quiebre stock 30 días",
+        quiebre_30_prom,
+    )
 
 with st.container():
-    st.markdown('<div class="filter-box">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Filtros</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="filter-box">',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="section-title">Filtros</div>',
+        unsafe_allow_html=True,
+    )
 
     f1, f2, f3, f4 = st.columns(4)
+
     with f1:
-        cuentaes = ["Todos"]
+        cuentas = ["Todos"]
+
         if col_cuenta:
-            cuentaes += sorted(df_base[col_cuenta].dropna().astype(str).unique().tolist())
-        filtro_cuenta = st.selectbox("cuenta", cuentaes)
+            cuentas += sorted(
+                df_base[col_cuenta]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+        filtro_cuenta = st.selectbox(
+            "cuenta",
+            cuentas,
+        )
 
     with f2:
         filtro_sku = st.text_input("SKU")
@@ -391,25 +656,63 @@ with st.container():
         filtro_titulo = st.text_input("Título")
 
     with f4:
-        filtro_sku_variante = st.text_input("SKU Variante")
+        filtro_sku_variante = st.text_input(
+            "SKU Variante"
+        )
 
     csv_buffer = io.BytesIO()
-    st.session_state.inv_filtrado.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
 
-    st.markdown('<div class="filter-actions">', unsafe_allow_html=True)
+    st.session_state.inv_filtrado.to_csv(
+        csv_buffer,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    st.markdown(
+        '<div class="filter-actions">',
+        unsafe_allow_html=True,
+    )
+
     b1, b2, b3 = st.columns(3)
+
     with b1:
-        st.markdown('<div class="visual-btn">', unsafe_allow_html=True)
-        aplicar = st.button("Aplicar filtros", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="visual-btn">',
+            unsafe_allow_html=True,
+        )
+
+        aplicar = st.button(
+            "Aplicar filtros",
+            use_container_width=True,
+        )
+
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     with b2:
-        st.markdown('<div class="visual-btn secondary">', unsafe_allow_html=True)
-        limpiar = st.button("Limpiar filtros", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="visual-btn secondary">',
+            unsafe_allow_html=True,
+        )
+
+        limpiar = st.button(
+            "Limpiar filtros",
+            use_container_width=True,
+        )
+
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     with b3:
-        st.markdown('<div class="visual-btn export">', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="visual-btn export">',
+            unsafe_allow_html=True,
+        )
+
         st.download_button(
             "Exportar CSV",
             data=csv_buffer.getvalue(),
@@ -417,29 +720,69 @@ with st.container():
             mime="text/csv",
             use_container_width=True,
         )
-        st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 if limpiar:
-    st.session_state.inv_filtrado = st.session_state.inv_base.copy()
+    st.session_state.inv_filtrado = (
+        st.session_state.inv_base.copy()
+    )
     st.rerun()
 
 if aplicar:
     vista = df_base.copy()
 
     if col_cuenta and filtro_cuenta != "Todos":
-        vista = vista[vista[col_cuenta].astype(str) == str(filtro_cuenta)]
+        vista = vista[
+            vista[col_cuenta].astype(str)
+            == str(filtro_cuenta)
+        ]
 
     if col_sku and filtro_sku.strip():
-        vista = vista[vista[col_sku].astype(str).str.contains(filtro_sku.strip(), case=False, na=False)]
+        vista = vista[
+            vista[col_sku]
+            .astype(str)
+            .str.contains(
+                filtro_sku.strip(),
+                case=False,
+                na=False,
+            )
+        ]
 
     if col_titulo and filtro_titulo.strip():
-        vista = vista[vista[col_titulo].astype(str).str.contains(filtro_titulo.strip(), case=False, na=False)]
+        vista = vista[
+            vista[col_titulo]
+            .astype(str)
+            .str.contains(
+                filtro_titulo.strip(),
+                case=False,
+                na=False,
+            )
+        ]
 
     if col_sku_variante and filtro_sku_variante.strip():
-        vista = vista[vista[col_sku_variante].astype(str).str.contains(filtro_sku_variante.strip(), case=False, na=False)]
+        vista = vista[
+            vista[col_sku_variante]
+            .astype(str)
+            .str.contains(
+                filtro_sku_variante.strip(),
+                case=False,
+                na=False,
+            )
+        ]
 
     st.session_state.inv_filtrado = vista.copy()
     st.rerun()
@@ -456,8 +799,16 @@ columnas_ocultar = [
 ]
 
 df_tabla = df_vista.drop(
-    columns=[c for c in columnas_ocultar if c in df_vista.columns],
-    errors="ignore"
+    columns=[
+        column
+        for column in columnas_ocultar
+        if column in df_vista.columns
+    ],
+    errors="ignore",
 )
 
-st.dataframe(df_tabla, use_container_width=True, height=700)
+st.dataframe(
+    df_tabla,
+    use_container_width=True,
+    height=700,
+)
