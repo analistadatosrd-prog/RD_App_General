@@ -105,10 +105,15 @@ def logout():
 def build_navigation():
     return [
         st.Page(
+            "modules/tablero_alertamientos.py",
+            title="Tablero de alertamientos",
+            icon="🚨",
+            default=True,
+        ),
+        st.Page(
             "modules/informe_inventarios.py",
             title="Informe de inventarios",
             icon="📦",
-            default=True,
         ),
         st.Page(
             "modules/informe_costos_foxy.py",
