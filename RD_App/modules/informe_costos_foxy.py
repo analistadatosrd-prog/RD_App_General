@@ -8,6 +8,7 @@ import streamlit as st
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+
 GRAPHQL_URL = "https://api.ecomexperts.com/graphql"
 ECOM_LOGIN_URL = "https://app.ecomexperts.com/login"
 
@@ -28,6 +29,11 @@ CUENTAS_SESION_PRINCIPAL = {
     "insuoffice",
     "tucocina_tufarmacia",
     "lalu_modernpinup",
+}
+
+CUENTAS_TAXES_PERCENTAGE = {
+    "rd_chile",
+    "rd_mexico",
 }
 
 CREDENCIALES_ADICIONALES = {
@@ -92,17 +98,20 @@ def post_graphql(session, query):
         "operationName": None,
     }
 
-    resp = session.post(
+    response = session.post(
         GRAPHQL_URL,
         data=json.dumps(payload),
         timeout=TIMEOUT,
     )
-    resp.raise_for_status()
 
-    data = resp.json()
+    response.raise_for_status()
+
+    data = response.json()
 
     if data.get("errors"):
-        raise ValueError(f"GraphQL error: {data['errors']}")
+        raise ValueError(
+            f"GraphQL error: {data['errors']}"
+        )
 
     return data
 
@@ -121,6 +130,7 @@ def extract_token_from_response(response):
 
     for header_name in possible_header_keys:
         token = response.headers.get(header_name)
+
         if token:
             return str(token)
 
@@ -161,14 +171,17 @@ def extract_token_from_response(response):
 
 def login_ecomexperts_rest(email_address, password):
     """
-    Autentica contra el login web de EcomExperts.
+    Genera una sesión independiente para cuentas adicionales.
 
-    La respuesta puede devolver JSON con el dashboard bajo la llave `html`,
-    sin token expuesto ni cookie con un nombre identificable. Por eso esta
-    función acepta una respuesta exitosa de login y la sesión se valida
-    luego mediante una consulta real al endpoint GraphQL.
+    Nota:
+    La respuesta del login puede contener HTML de dashboard, cookies,
+    headers u otro mecanismo interno de sesión. Si se detecta un token,
+    se asigna al header Authorization; si no, se mantiene la sesión
+    HTTP creada por requests.Session.
     """
-    session = configure_session(requests.Session())
+    session = configure_session(
+        requests.Session()
+    )
 
     payload = {
         "User": {
@@ -192,7 +205,11 @@ def login_ecomexperts_rest(email_address, password):
         response_data = {}
 
     if isinstance(response_data, dict):
-        login_error = response_data.get("error", False)
+        login_error = response_data.get(
+            "error",
+            False,
+        )
+
         login_success = response_data.get(
             "success",
             response_data.get("status", False),
@@ -210,15 +227,17 @@ def login_ecomexperts_rest(email_address, password):
         if token.lower().startswith("bearer "):
             session.headers["Authorization"] = token
         else:
-            session.headers["Authorization"] = f"Bearer {token}"
+            session.headers["Authorization"] = (
+                f"Bearer {token}"
+            )
 
     return session
 
 
 def validar_sesion_graphql(session, cuenta):
     """
-    Valida que la sesión web recién creada tenga permisos sobre GraphQL.
-    Consulta una página mínima del catálogo para no agregar una carga pesada.
+    Verifica que la sesión creada para la cuenta adicional pueda
+    conectarse a GraphQL sin hacer una consulta grande.
     """
     query = """
     query {
@@ -241,18 +260,32 @@ def validar_sesion_graphql(session, cuenta):
         ) from exc
 
 
-def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
+def fetch_ml_listings_fast(
+    session,
+    status_callback=None,
+    account_filter=None,
+):
     all_rows = []
     current_page = 1
 
     while True:
         if status_callback:
-            status_callback(f"Consultando mlListings - página {current_page}...")
+            status_callback(
+                f"Consultando mlListings - página {current_page}..."
+            )
 
         query = f"""
         query {{
           mlListings {{
-            find(page: {current_page}, filters:[{{ filter:"active", values:["1"] }}]) {{
+            find(
+              page: {current_page},
+              filters: [
+                {{
+                  filter: "active",
+                  values: ["1"]
+                }}
+              ]
+            ) {{
               data {{
                 id
                 accountId
@@ -286,7 +319,9 @@ def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
             break
 
         for listing in listings:
-            account_id = str(listing.get("accountId", "") or "")
+            account_id = str(
+                listing.get("accountId", "") or ""
+            )
 
             if account_id not in ACCOUNT_ID_CUENTAS:
                 continue
@@ -299,8 +334,13 @@ def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
             if account_filter and cuenta != account_filter:
                 continue
 
-            owner = str(listing.get("owner", "") or "")
-            mla = str(listing.get("ownerId", "") or "")
+            owner = str(
+                listing.get("owner", "") or ""
+            )
+
+            mla = str(
+                listing.get("ownerId", "") or ""
+            )
 
             for item in listing.get("productListings") or []:
                 product = item.get("product") or {}
@@ -311,11 +351,15 @@ def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
                         "mla": mla,
                         "owner": owner,
                         "account_id": account_id,
-                        "product_id": str(item.get("productId", "") or ""),
+                        "product_id": str(
+                            item.get("productId", "") or ""
+                        ),
                         "product_variant_id": str(
                             item.get("productVariantId", "") or ""
                         ),
-                        "sku": str(product.get("sku", "") or "").strip(),
+                        "sku": str(
+                            product.get("sku", "") or ""
+                        ).strip(),
                         "titulo_producto_base": str(
                             product.get("title", "") or ""
                         ).strip(),
@@ -351,6 +395,7 @@ def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
     df["sku"] = df["sku"].astype(str).str.strip()
     df["mla"] = df["mla"].astype(str).str.strip()
     df["cuenta"] = df["cuenta"].astype(str).str.strip()
+
     df["unidades"] = pd.to_numeric(
         df["unidades"],
         errors="coerce",
@@ -359,31 +404,176 @@ def fetch_ml_listings_fast(session, status_callback=None, account_filter=None):
     return df
 
 
-def fetch_products_fast(session, status_callback=None):
+def obtener_iva_desde_tax(product_tax):
+    """
+    Convierte el campo `tax` de las cuentas principales a un número.
+
+    Puede venir como:
+    - número;
+    - texto numérico;
+    - diccionario;
+    - lista de diccionarios.
+    """
+    if product_tax is None:
+        return None
+
+    if isinstance(product_tax, dict):
+        for key in [
+            "iva",
+            "IVA",
+            "tax",
+            "value",
+            "amount",
+            "percentage",
+            "percent",
+        ]:
+            if key in product_tax:
+                return pd.to_numeric(
+                    product_tax[key],
+                    errors="coerce",
+                )
+
+        return None
+
+    if isinstance(product_tax, list):
+        values = []
+
+        for tax_item in product_tax:
+            if not isinstance(tax_item, dict):
+                continue
+
+            for key in [
+                "iva",
+                "IVA",
+                "tax",
+                "value",
+                "amount",
+                "percentage",
+                "percent",
+            ]:
+                if key in tax_item:
+                    value = pd.to_numeric(
+                        tax_item[key],
+                        errors="coerce",
+                    )
+
+                    if pd.notna(value):
+                        values.append(value)
+
+                    break
+
+        return max(values) if values else None
+
+    return pd.to_numeric(
+        product_tax,
+        errors="coerce",
+    )
+
+
+def obtener_iva_desde_taxes(taxes):
+    """
+    Convierte el campo:
+
+        taxes {
+            percentage
+        }
+
+    de Chile y México a una única columna numérica `iva`.
+
+    Si llega más de un impuesto, se utiliza el mayor percentage.
+    """
+    if taxes is None:
+        return None
+
+    if isinstance(taxes, dict):
+        taxes = [taxes]
+
+    if not isinstance(taxes, list):
+        return None
+
+    percentages = []
+
+    for tax_item in taxes:
+        if not isinstance(tax_item, dict):
+            continue
+
+        percentage = pd.to_numeric(
+            tax_item.get("percentage"),
+            errors="coerce",
+        )
+
+        if pd.notna(percentage):
+            percentages.append(percentage)
+
+    return max(percentages) if percentages else None
+
+
+def fetch_products_fast(
+    session,
+    status_callback=None,
+    usar_taxes_percentage=False,
+):
+    """
+    Consulta catálogo de productos y costos.
+
+    Cuentas principales:
+        tax
+
+    rd_chile y rd_mexico:
+        taxes {
+            percentage
+        }
+
+    El DataFrame final conserva la misma estructura para todas las
+    cuentas, con la columna estándar `iva`.
+    """
     rows = []
     current_page = 1
 
     while True:
         if status_callback:
-            status_callback(f"Consultando products - página {current_page}...")
+            status_callback(
+                f"Consultando products - página {current_page}..."
+            )
 
-        query = f"""
-        query {{
-          products {{
-            find(page: {current_page}) {{
-              data {{
-                sku
-                title
-                tax
-                variants {{
-                  sku
-                  cost
+        if usar_taxes_percentage:
+            query = f"""
+            query {{
+              products {{
+                find(page: {current_page}) {{
+                  data {{
+                    sku
+                    title
+                    taxes {{
+                      percentage
+                    }}
+                    variants {{
+                      sku
+                      cost
+                    }}
+                  }}
                 }}
               }}
             }}
-          }}
-        }}
-        """
+            """
+        else:
+            query = f"""
+            query {{
+              products {{
+                find(page: {current_page}) {{
+                  data {{
+                    sku
+                    title
+                    tax
+                    variants {{
+                      sku
+                      cost
+                    }}
+                  }}
+                }}
+              }}
+            }}
+            """
 
         data = post_graphql(session, query)
 
@@ -398,27 +588,22 @@ def fetch_products_fast(session, status_callback=None):
             break
 
         for product in products:
-            product_sku = str(product.get("sku", "") or "").strip()
-            product_title = str(product.get("title", "") or "").strip()
-            product_tax = product.get("tax", None)
+            product_sku = str(
+                product.get("sku", "") or ""
+            ).strip()
 
-            tax_value = None
+            product_title = str(
+                product.get("title", "") or ""
+            ).strip()
 
-            if isinstance(product_tax, dict):
-                for key in [
-                    "iva",
-                    "IVA",
-                    "tax",
-                    "value",
-                    "amount",
-                    "percentage",
-                    "percent",
-                ]:
-                    if key in product_tax:
-                        tax_value = product_tax[key]
-                        break
+            if usar_taxes_percentage:
+                iva_value = obtener_iva_desde_taxes(
+                    product.get("taxes")
+                )
             else:
-                tax_value = product_tax
+                iva_value = obtener_iva_desde_tax(
+                    product.get("tax")
+                )
 
             variants = product.get("variants") or []
 
@@ -430,7 +615,13 @@ def fetch_products_fast(session, status_callback=None):
                     )
                     for variant in variants
                 ]
-                costs = [cost for cost in costs if pd.notna(cost)]
+
+                costs = [
+                    cost
+                    for cost in costs
+                    if pd.notna(cost)
+                ]
+
                 max_cost = max(costs) if costs else None
             else:
                 max_cost = None
@@ -444,7 +635,7 @@ def fetch_products_fast(session, status_callback=None):
                         errors="coerce",
                     ),
                     "iva": pd.to_numeric(
-                        tax_value,
+                        iva_value,
                         errors="coerce",
                     ),
                 }
@@ -470,7 +661,10 @@ def fetch_products_fast(session, status_callback=None):
     df["sku"] = df["sku"].astype(str).str.strip()
 
     return (
-        df.groupby("sku", as_index=False)
+        df.groupby(
+            "sku",
+            as_index=False,
+        )
         .agg(
             {
                 "titulo_catalogo": "first",
@@ -495,6 +689,12 @@ def clasificar_mla(num_skus, total_qty):
 
 
 def build_outputs(df_listings, df_products, status_callback=None):
+    """
+    Mantiene compatibilidad con el flujo histórico del módulo.
+
+    Esta función sigue disponible si deseas usar la estructura general
+    de listado + catálogo de una sola fuente.
+    """
     if df_listings.empty:
         detalle = pd.DataFrame(
             columns=[
@@ -527,7 +727,7 @@ def build_outputs(df_listings, df_products, status_callback=None):
 
     if status_callback:
         status_callback(
-            "Depurando SKUs duplicados por cuenta + MLA + SKU (qty máximo)..."
+            "Depurando SKUs duplicados por cuenta + MLA + SKU..."
         )
 
     detalle = (
@@ -556,7 +756,9 @@ def build_outputs(df_listings, df_products, status_callback=None):
     )
 
     if status_callback:
-        status_callback("Cruzando SKUs únicos contra catálogo de costos...")
+        status_callback(
+            "Cruzando SKUs únicos contra catálogo de costos..."
+        )
 
     detalle = detalle.merge(
         df_products,
@@ -603,12 +805,16 @@ def build_outputs(df_listings, df_products, status_callback=None):
                 "titulo_final",
             ]
         ]
-        .sort_values(["cuenta", "mla", "sku"])
+        .sort_values(
+            ["cuenta", "mla", "sku"]
+        )
         .reset_index(drop=True)
     )
 
     if status_callback:
-        status_callback("Construyendo resumen final por cuenta + MLA...")
+        status_callback(
+            "Construyendo resumen final por cuenta y MLA..."
+        )
 
     final_df = (
         detalle.groupby(
@@ -673,7 +879,13 @@ def build_outputs(df_listings, df_products, status_callback=None):
                 "tipo_producto",
             ]
         ]
-        .sort_values(["cuenta", "tipo_producto", "mla"])
+        .sort_values(
+            [
+                "cuenta",
+                "tipo_producto",
+                "mla",
+            ]
+        )
         .reset_index(drop=True)
     )
 
@@ -704,37 +916,60 @@ def apply_filters():
         st.session_state.foxy_df_vista = (
             st.session_state.foxy_df_final.copy()
         )
+
         st.session_state.foxy_df_detalle_vista = (
             st.session_state.foxy_df_detalle.copy()
         )
+
         return
 
     vista = st.session_state.foxy_df_final.copy()
 
-    filtro_titulo = st.session_state.foxy_buscar_titulo.strip()
-    filtro_sku = st.session_state.foxy_buscar_sku.strip()
-    filtro_mla = st.session_state.foxy_buscar_mla.strip()
+    filtro_titulo = (
+        st.session_state.foxy_buscar_titulo.strip()
+    )
+
+    filtro_sku = (
+        st.session_state.foxy_buscar_sku.strip()
+    )
+
+    filtro_mla = (
+        st.session_state.foxy_buscar_mla.strip()
+    )
+
     tipo = st.session_state.foxy_tipo.strip()
 
     if filtro_titulo:
         vista = vista[
             vista["titulo_producto"]
             .astype(str)
-            .str.contains(filtro_titulo, case=False, na=False)
+            .str.contains(
+                filtro_titulo,
+                case=False,
+                na=False,
+            )
         ]
 
     if filtro_sku:
         vista = vista[
             vista["skus_asociados"]
             .astype(str)
-            .str.contains(filtro_sku, case=False, na=False)
+            .str.contains(
+                filtro_sku,
+                case=False,
+                na=False,
+            )
         ]
 
     if filtro_mla:
         vista = vista[
             vista["mla"]
             .astype(str)
-            .str.contains(filtro_mla, case=False, na=False)
+            .str.contains(
+                filtro_mla,
+                case=False,
+                na=False,
+            )
         ]
 
     if tipo and tipo != "Todos":
@@ -750,25 +985,39 @@ def apply_filters():
         detalle_vista = detalle_vista[
             detalle_vista["mla"]
             .astype(str)
-            .str.contains(filtro_mla, case=False, na=False)
+            .str.contains(
+                filtro_mla,
+                case=False,
+                na=False,
+            )
         ]
 
     if filtro_sku:
         detalle_vista = detalle_vista[
             detalle_vista["sku"]
             .astype(str)
-            .str.contains(filtro_sku, case=False, na=False)
+            .str.contains(
+                filtro_sku,
+                case=False,
+                na=False,
+            )
         ]
 
     if filtro_titulo:
         detalle_vista = detalle_vista[
             detalle_vista["titulo_final"]
             .astype(str)
-            .str.contains(filtro_titulo, case=False, na=False)
+            .str.contains(
+                filtro_titulo,
+                case=False,
+                na=False,
+            )
         ]
 
     if tipo and tipo != "Todos":
-        mlas_validos = set(vista["mla"].astype(str).tolist())
+        mlas_validos = set(
+            vista["mla"].astype(str).tolist()
+        )
 
         detalle_vista = detalle_vista[
             detalle_vista["mla"]
@@ -776,23 +1025,32 @@ def apply_filters():
             .isin(mlas_validos)
         ]
 
-    st.session_state.foxy_df_detalle_vista = detalle_vista.copy()
+    st.session_state.foxy_df_detalle_vista = (
+        detalle_vista.copy()
+    )
 
 
 def excel_bytes(df_vista, df_detalle_vista):
     try:
         import xlsxwriter  # noqa: F401
+
         engine = "xlsxwriter"
+
     except Exception:
         try:
             import openpyxl  # noqa: F401
+
             engine = "openpyxl"
+
         except Exception:
             return None
 
     output = BytesIO()
 
-    with pd.ExcelWriter(output, engine=engine) as writer:
+    with pd.ExcelWriter(
+        output,
+        engine=engine,
+    ) as writer:
         df_vista.to_excel(
             writer,
             index=False,
@@ -814,20 +1072,35 @@ def update_status(message: str):
 
 def consultar_datos_con_multiples_sesiones(status_callback=None):
     """
-    Consulta las cuatro cuentas de la sesión principal y agrega las
-    consultas internas de rd_chile y rd_mexico.
+    Consulta todas las cuentas configuradas.
 
-    Cada sesión consulta su propio catálogo de productos, por lo que el
-    costo asociado al SKU se toma del catálogo correcto de cada cuenta.
+    Cuentas principales:
+    - rd_argentina
+    - insuoffice
+    - tucocina_tufarmacia
+    - lalu_modernpinup
+
+    Cuentas adicionales:
+    - rd_chile
+    - rd_mexico
+
+    Homologación de IVA:
+    - Cuentas principales: campo `tax`
+    - Chile y México: campo `taxes { percentage }`
+    - Resultado final: campo estándar `iva`
     """
-    session_principal = st.session_state.get("ecom_session")
+    session_principal = st.session_state.get(
+        "ecom_session"
+    )
 
     if session_principal is None:
         raise ValueError(
             "La sesión principal de EcomExperts no está disponible."
         )
 
-    session_principal = ensure_session_ready(session_principal)
+    session_principal = ensure_session_ready(
+        session_principal
+    )
 
     errores = []
     bloques_listings = []
@@ -840,7 +1113,7 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
             )
 
         listings_principal = fetch_ml_listings_fast(
-            session_principal,
+            session=session_principal,
             status_callback=status_callback,
         )
 
@@ -850,7 +1123,9 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
             )
         ].reset_index(drop=True)
 
-        bloques_listings.append(listings_principal)
+        bloques_listings.append(
+            listings_principal
+        )
 
         if status_callback:
             status_callback(
@@ -858,16 +1133,23 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
             )
 
         productos_principal = fetch_products_fast(
-            session_principal,
+            session=session_principal,
             status_callback=None,
+            usar_taxes_percentage=False,
         )
 
-        productos_principal["catalogo_cuenta"] = "__sesion_principal__"
-        bloques_productos.append(productos_principal)
+        productos_principal["catalogo_cuenta"] = (
+            "__sesion_principal__"
+        )
+
+        bloques_productos.append(
+            productos_principal
+        )
 
     except Exception as exc:
         raise ValueError(
-            f"No fue posible consultar las cuentas de la sesión principal: {exc}"
+            "No fue posible consultar las cuentas de la sesión principal: "
+            f"{exc}"
         ) from exc
 
     for cuenta, credenciales in CREDENCIALES_ADICIONALES.items():
@@ -878,7 +1160,9 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                 )
 
             session_adicional = login_ecomexperts_rest(
-                email_address=credenciales["email_address"],
+                email_address=credenciales[
+                    "email_address"
+                ],
                 password=credenciales["password"],
             )
 
@@ -898,19 +1182,21 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                 )
 
             listings_cuenta = fetch_ml_listings_fast(
-                session_adicional,
+                session=session_adicional,
                 status_callback=None,
                 account_filter=cuenta,
             )
 
             if listings_cuenta.empty:
                 errores.append(
-                    f"{cuenta}: autenticación correcta, pero no se encontraron "
-                    "listados activos del account_id configurado."
+                    f"{cuenta}: autenticación correcta, pero no se "
+                    "encontraron listados activos del account_id configurado."
                 )
                 continue
 
-            bloques_listings.append(listings_cuenta)
+            bloques_listings.append(
+                listings_cuenta
+            )
 
             if status_callback:
                 status_callback(
@@ -918,12 +1204,18 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                 )
 
             productos_cuenta = fetch_products_fast(
-                session_adicional,
+                session=session_adicional,
                 status_callback=None,
+                usar_taxes_percentage=(
+                    cuenta in CUENTAS_TAXES_PERCENTAGE
+                ),
             )
 
             productos_cuenta["catalogo_cuenta"] = cuenta
-            bloques_productos.append(productos_cuenta)
+
+            bloques_productos.append(
+                productos_cuenta
+            )
 
         except Exception as exc:
             errores.append(
@@ -965,9 +1257,13 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
 
         return detalle_vacio, final_vacio, errores
 
-    df_listings["catalogo_cuenta"] = df_listings["cuenta"].where(
-        df_listings["cuenta"].isin(CREDENCIALES_ADICIONALES.keys()),
-        "__sesion_principal__",
+    df_listings["catalogo_cuenta"] = (
+        df_listings["cuenta"].where(
+            df_listings["cuenta"].isin(
+                CREDENCIALES_ADICIONALES.keys()
+            ),
+            "__sesion_principal__",
+        )
     )
 
     if bloques_productos:
@@ -994,7 +1290,10 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
 
     df_productos = (
         df_productos.groupby(
-            ["catalogo_cuenta", "sku"],
+            [
+                "catalogo_cuenta",
+                "sku",
+            ],
             as_index=False,
         )
         .agg(
@@ -1041,7 +1340,10 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
 
     detalle_bruto = detalle_bruto.merge(
         df_productos,
-        on=["catalogo_cuenta", "sku"],
+        on=[
+            "catalogo_cuenta",
+            "sku",
+        ],
         how="left",
     )
 
@@ -1084,16 +1386,27 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                 "titulo_final",
             ]
         ]
-        .sort_values(["cuenta", "mla", "sku"])
+        .sort_values(
+            [
+                "cuenta",
+                "mla",
+                "sku",
+            ]
+        )
         .reset_index(drop=True)
     )
 
     if status_callback:
-        status_callback("Construyendo resumen final por cuenta y MLA...")
+        status_callback(
+            "Construyendo resumen final por cuenta y MLA..."
+        )
 
     final_df = (
         detalle_df.groupby(
-            ["cuenta", "mla"],
+            [
+                "cuenta",
+                "mla",
+            ],
             as_index=False,
         )
         .agg(
@@ -1125,10 +1438,22 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                     )
                 ),
             ),
-            unidades_totales=("unidades", "sum"),
-            costo_total_mla=("costo_total_sku", "sum"),
-            iva=("iva", "max"),
-            cant_sku=("sku", "nunique"),
+            unidades_totales=(
+                "unidades",
+                "sum",
+            ),
+            costo_total_mla=(
+                "costo_total_sku",
+                "sum",
+            ),
+            iva=(
+                "iva",
+                "max",
+            ),
+            cant_sku=(
+                "sku",
+                "nunique",
+            ),
         )
     )
 
@@ -1154,7 +1479,13 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
                 "tipo_producto",
             ]
         ]
-        .sort_values(["cuenta", "tipo_producto", "mla"])
+        .sort_values(
+            [
+                "cuenta",
+                "tipo_producto",
+                "mla",
+            ]
+        )
         .reset_index(drop=True)
     )
 
@@ -1164,6 +1495,7 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
 init_state()
 
 st.title("Informe de Costos Foxy")
+
 st.caption(
     "Consulta costos por MLA y detalle SKU desde EcomExperts "
     "(incluye rd_chile y rd_mexico)."
@@ -1173,15 +1505,19 @@ if not st.session_state.get("authenticated"):
     st.error("No hay una sesión autenticada.")
     st.stop()
 
-session_principal = st.session_state.get("ecom_session")
+session_principal = st.session_state.get(
+    "ecom_session"
+)
 
 if session_principal is None:
-    st.error("La sesión principal de EcomExperts no está disponible.")
+    st.error(
+        "La sesión principal de EcomExperts no está disponible."
+    )
     st.stop()
 
-col1, col2 = st.columns([1, 3])
+col_1, col_2 = st.columns([1, 3])
 
-with col1:
+with col_1:
     consultar = st.button(
         "Consultar datos",
         type="primary",
@@ -1201,11 +1537,19 @@ with col1:
                     )
                 )
 
-                st.session_state.foxy_df_detalle = detalle_df.copy()
-                st.session_state.foxy_df_final = final_df.copy()
-                st.session_state.foxy_status = (
-                    f"Consulta completada en {round(time.time() - inicio, 2)} s"
+                st.session_state.foxy_df_detalle = (
+                    detalle_df.copy()
                 )
+
+                st.session_state.foxy_df_final = (
+                    final_df.copy()
+                )
+
+                st.session_state.foxy_status = (
+                    "Consulta completada en "
+                    f"{round(time.time() - inicio, 2)} s"
+                )
+
                 st.session_state.foxy_detalle_carga = (
                     "Carga finalizada correctamente."
                 )
@@ -1217,7 +1561,9 @@ with col1:
 
                 apply_filters()
 
-            st.success(st.session_state.foxy_status)
+            st.success(
+                st.session_state.foxy_status
+            )
 
             if errores:
                 st.warning(
@@ -1229,17 +1575,22 @@ with col1:
                     st.caption(error)
 
         except Exception as exc:
-            st.session_state.foxy_status = "Error en consulta"
+            st.session_state.foxy_status = (
+                "Error en consulta"
+            )
+
             st.session_state.foxy_detalle_carga = (
                 "La carga se interrumpió por un error."
             )
+
             st.error(f"Error: {exc}")
 
-with col2:
+with col_2:
     st.write(
         f"**Estado de carga:** "
         f"{st.session_state.foxy_detalle_carga}"
     )
+
     st.write(
         f"**Estado general:** "
         f"{st.session_state.foxy_status}"
@@ -1275,7 +1626,9 @@ with filter_cols[3]:
 
     if not st.session_state.foxy_df_final.empty:
         tipos += sorted(
-            st.session_state.foxy_df_final["tipo_producto"]
+            st.session_state.foxy_df_final[
+                "tipo_producto"
+            ]
             .dropna()
             .unique()
             .tolist()
@@ -1289,7 +1642,10 @@ with filter_cols[3]:
     )
 
 with filter_cols[4]:
-    if st.button("Limpiar", use_container_width=True):
+    if st.button(
+        "Limpiar",
+        use_container_width=True,
+    ):
         st.session_state.foxy_buscar_titulo = ""
         st.session_state.foxy_buscar_sku = ""
         st.session_state.foxy_buscar_mla = ""
@@ -1300,38 +1656,44 @@ with filter_cols[4]:
 
 apply_filters()
 
-m1, m2, m3 = st.columns(3)
+metric_1, metric_2, metric_3 = st.columns(3)
 
-with m1:
+with metric_1:
     st.metric(
         "MLA filtrados",
         len(st.session_state.foxy_df_vista),
     )
 
-with m2:
-    st.metric(
-        "Costo total filtrado",
-        round(
+with metric_2:
+    if st.session_state.foxy_df_vista.empty:
+        costo_total = 0
+    else:
+        costo_total = round(
             st.session_state.foxy_df_vista[
                 "costo_total_mla"
             ].sum(),
             2,
         )
-        if not st.session_state.foxy_df_vista.empty
-        else 0,
+
+    st.metric(
+        "Costo total filtrado",
+        costo_total,
     )
 
-with m3:
-    st.metric(
-        "Unidades totales filtradas",
-        round(
+with metric_3:
+    if st.session_state.foxy_df_vista.empty:
+        unidades_totales = 0
+    else:
+        unidades_totales = round(
             st.session_state.foxy_df_vista[
                 "unidades_totales"
             ].sum(),
             2,
         )
-        if not st.session_state.foxy_df_vista.empty
-        else 0,
+
+    st.metric(
+        "Unidades totales filtradas",
+        unidades_totales,
     )
 
 st.subheader("Tabla final por MLA")
@@ -1351,9 +1713,9 @@ st.dataframe(
 )
 
 if not st.session_state.foxy_df_vista.empty:
-    c1, c2 = st.columns(2)
+    download_col_1, download_col_2 = st.columns(2)
 
-    with c1:
+    with download_col_1:
         st.download_button(
             "Descargar CSV",
             data=(
@@ -1366,7 +1728,7 @@ if not st.session_state.foxy_df_vista.empty:
             use_container_width=True,
         )
 
-    with c2:
+    with download_col_2:
         excel_data = excel_bytes(
             st.session_state.foxy_df_vista,
             st.session_state.foxy_df_detalle_vista,
