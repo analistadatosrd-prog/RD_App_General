@@ -140,7 +140,12 @@ def build_navigation():
             title="Reporte de Envíos",
             icon="🚚",
         ),
-    ]
+        st.Page(
+            "modules/chatbot_reviews.py",
+            title="Chatbot de Reviews",
+            icon="💬",
+        ),
+     ]
 
 
 restore_session_if_needed()
