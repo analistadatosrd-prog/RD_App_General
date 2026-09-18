@@ -1032,13 +1032,13 @@ def apply_filters():
 
 def excel_bytes(df_vista, df_detalle_vista):
     try:
-        import xlsxwriter  # noqa: F401
+        import xlsxwriter
 
         engine = "xlsxwriter"
 
     except Exception:
         try:
-            import openpyxl  # noqa: F401
+            import openpyxl
 
             engine = "openpyxl"
 
