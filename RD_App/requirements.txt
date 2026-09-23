@@ -4,4 +4,4 @@ psycopg2-binary
 passlib[bcrypt]
 bcrypt
 openpyxl
-google-genai>=1.0.0
+requests>=2.31.0
