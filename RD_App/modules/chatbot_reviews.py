@@ -1,16 +1,22 @@
 import streamlit as st
+from google import genai
 
-st.set_page_config(
-    page_title="Chatbot de Reviews",
-    page_icon="💬",
-    layout="wide",
-)
+st.title("Prueba de Gemini")
 
-st.title("Chatbot de Reviews")
-st.caption(
-    "Análisis inteligente de reseñas de clientes."
-)
+try:
+    client = genai.Client(
+        api_key=st.secrets["GEMINI_API_KEY"]
+    )
 
-st.info(
-    "Este módulo se encuentra en desarrollo."
-)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents="Responde exactamente: conexión correcta.",
+    )
+
+    st.success(response.text)
+
+except KeyError:
+    st.error("Falta GEMINI_API_KEY en Streamlit Secrets.")
+
+except Exception as exc:
+    st.error(f"Error al conectar con Gemini: {exc}")
