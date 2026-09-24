@@ -43,10 +43,6 @@ def get_default_date_range(
     date_min: date,
     date_max: date,
 ) -> tuple[date, date]:
-    """
-    Por defecto muestra todo el universo. El usuario puede aplicar
-    una ventana rápida o elegir un rango personalizado.
-    """
     return date_min, date_max
 
 
@@ -172,6 +168,31 @@ def inject_styles() -> None:
                 font-weight: 800;
                 font-size: 1.15rem;
             }
+
+            [data-testid="stSidebar"] .reviews-filter-panel {
+                padding: 0.9rem;
+                border-radius: 14px;
+                background: linear-gradient(
+                    145deg,
+                    #0f2d52 0%,
+                    #123e72 100%
+                );
+                border: 1px solid #2d6db1;
+                margin: 0.65rem 0 1rem 0;
+            }
+
+            [data-testid="stSidebar"] .reviews-filter-panel h3 {
+                margin: 0;
+                color: #f8fafc;
+                font-size: 1rem;
+            }
+
+            [data-testid="stSidebar"] .reviews-filter-panel p {
+                color: #bfdbfe;
+                font-size: 0.76rem;
+                line-height: 1.35;
+                margin: 0.35rem 0 0 0;
+            }
         </style>
         """,
         unsafe_allow_html=True,
@@ -197,6 +218,11 @@ def render_metric_card(
 
 
 def render_filters() -> ReviewFilters:
+    """
+    Los filtros viven en la barra lateral de Streamlit, que permanece
+    fija durante el scroll y aplica el mismo universo a tablero,
+    alertas y explorador.
+    """
     options = get_filter_options()
     date_min, date_max = get_date_bounds()
 
@@ -205,16 +231,21 @@ def render_filters() -> ReviewFilters:
             get_default_date_range(date_min, date_max)
         )
 
-    st.markdown(
-        '<div class="section-title">⚙️ Filtros globales</div>',
-        unsafe_allow_html=True,
-    )
+    with st.sidebar:
+        st.markdown(
+            """
+            <div class="reviews-filter-panel">
+                <h3>🎛️ Filtros de Reviews</h3>
+                <p>
+                    Aplican a todo Reviews Intelligence:
+                    tablero, alertas y explorador.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    with st.expander(
-        "Abrir filtros de análisis",
-        expanded=True,
-    ):
-        quick_range = st.radio(
+        quick_range = st.selectbox(
             "Período",
             options=[
                 "Todo el historial",
@@ -224,7 +255,6 @@ def render_filters() -> ReviewFilters:
                 "Año actual",
                 "Rango personalizado",
             ],
-            horizontal=True,
             key="reviews_quick_range",
         )
 
@@ -253,7 +283,10 @@ def render_filters() -> ReviewFilters:
 
         elif quick_range == "Año actual":
             year_start = date(today.year, 1, 1)
-            selected_range = (max(date_min, year_start), date_max)
+            selected_range = (
+                max(date_min, year_start),
+                date_max,
+            )
 
         else:
             selected_range = st.date_input(
@@ -265,77 +298,87 @@ def render_filters() -> ReviewFilters:
             )
 
             if isinstance(selected_range, date):
-                selected_range = (selected_range, selected_range)
+                selected_range = (
+                    selected_range,
+                    selected_range,
+                )
 
             if len(selected_range) != 2:
                 selected_range = st.session_state.reviews_date_range
 
         st.session_state.reviews_date_range = selected_range
 
-        row_1 = st.columns(4)
+        with st.expander(
+            "Identificación y producto",
+            expanded=True,
+        ):
+            ml_id = st.text_input(
+                "ML_ID",
+                placeholder="Ej. MLA123456789",
+                key="reviews_ml_id",
+            )
 
-        ml_id = row_1[0].text_input(
-            "ML_ID",
-            placeholder="Ej. MLA123456789",
-            key="reviews_ml_id",
-        )
+            sku = st.text_input(
+                "SKU",
+                placeholder="Buscar SKU",
+                key="reviews_sku",
+            )
 
-        cuenta = row_1[1].multiselect(
-            "Cuenta",
-            options=options["cuentas"],
-            key="reviews_cuenta",
-        )
+            titulo_ecom = st.text_input(
+                "Título e-commerce",
+                placeholder="Buscar producto asociado",
+                key="reviews_titulo_ecom",
+            )
 
-        estrellas = row_1[2].multiselect(
-            "Estrellas",
-            options=[1, 2, 3, 4, 5],
-            format_func=lambda value: f"{value} estrella(s)",
-            key="reviews_estrellas",
-        )
+            titulo_meli = st.text_input(
+                "Título Mercado Libre",
+                placeholder="Buscar publicación",
+                key="reviews_titulo_meli",
+            )
 
-        estado_meli = row_1[3].multiselect(
-            "Estado Mercado Libre",
-            options=options["estados_meli"],
-            key="reviews_estado_meli",
-        )
+        with st.expander(
+            "Cuenta y publicación",
+            expanded=False,
+        ):
+            cuenta = st.multiselect(
+                "Cuenta",
+                options=options["cuentas"],
+                key="reviews_cuenta",
+            )
 
-        row_2 = st.columns(4)
+            estado_meli = st.multiselect(
+                "Estado Mercado Libre",
+                options=options["estados_meli"],
+                key="reviews_estado_meli",
+            )
 
-        titulo_ecom = row_2[0].text_input(
-            "Título e-commerce",
-            placeholder="Buscar producto asociado",
-            key="reviews_titulo_ecom",
-        )
+            tipo_publicacion = st.multiselect(
+                "Tipo de publicación",
+                options=options["tipos_publicacion"],
+                key="reviews_tipo_publicacion",
+            )
 
-        sku = row_2[1].text_input(
-            "SKU",
-            placeholder="Buscar SKU",
-            key="reviews_sku",
-        )
+            tipo_oferta = st.multiselect(
+                "Tipo de oferta",
+                options=options["tipos_oferta"],
+                key="reviews_tipo_oferta",
+            )
 
-        tipo_publicacion = row_2[2].multiselect(
-            "Tipo de publicación",
-            options=options["tipos_publicacion"],
-            key="reviews_tipo_publicacion",
-        )
+        with st.expander(
+            "Calificación",
+            expanded=False,
+        ):
+            estrellas = st.multiselect(
+                "Estrellas",
+                options=[1, 2, 3, 4, 5],
+                format_func=lambda value: f"{value} estrella(s)",
+                key="reviews_estrellas",
+            )
 
-        tipo_oferta = row_2[3].multiselect(
-            "Tipo de oferta",
-            options=options["tipos_oferta"],
-            key="reviews_tipo_oferta",
-        )
-
-        row_3 = st.columns(2)
-
-        titulo_meli = row_3[0].text_input(
-            "Título Mercado Libre",
-            placeholder="Buscar título de publicación",
-            key="reviews_titulo_meli",
-        )
-
-        if row_3[1].button(
+        if st.button(
             "↻ Restablecer filtros",
             use_container_width=True,
+            type="secondary",
         ):
             keys_to_reset = [
                 "reviews_quick_range",
@@ -377,7 +420,10 @@ def render_filters() -> ReviewFilters:
 
 def build_filter_summary(filters: ReviewFilters) -> str:
     parts = [
-        f"📅 {filters.fecha_desde:%d/%m/%Y}–{filters.fecha_hasta:%d/%m/%Y}"
+        (
+            f"📅 {filters.fecha_desde:%d/%m/%Y}"
+            f"–{filters.fecha_hasta:%d/%m/%Y}"
+        )
     ]
 
     if filters.ml_id:
@@ -396,6 +442,11 @@ def build_filter_summary(filters: ReviewFilters) -> str:
             "Estado: " + ", ".join(filters.estado_meli)
         )
 
+    if filters.titulo_ecom:
+        parts.append(
+            f"Título e-commerce: {filters.titulo_ecom}"
+        )
+
     if filters.sku:
         parts.append(f"SKU contiene: {filters.sku}")
 
@@ -403,6 +454,11 @@ def build_filter_summary(filters: ReviewFilters) -> str:
         parts.append(
             "Publicación: "
             + ", ".join(filters.tipo_publicacion)
+        )
+
+    if filters.titulo_meli:
+        parts.append(
+            f"Título Mercado Libre: {filters.titulo_meli}"
         )
 
     if filters.tipo_oferta:
@@ -498,28 +554,35 @@ def render_dashboard(
 
     with left_chart:
         st.caption("Distribución de calificaciones")
-        if not rating_distribution.empty:
+
+        if rating_distribution.empty:
+            st.info("No hay datos de calificación para graficar.")
+        else:
             chart_df = rating_distribution.copy()
             chart_df["Etiqueta"] = (
                 chart_df["estrellas"].astype(int).astype(str) + " ★"
             )
+
             st.bar_chart(
                 chart_df.set_index("Etiqueta")["reviews"],
                 color="#f59e0b",
                 use_container_width=True,
             )
-        else:
-            st.info("No hay datos de calificación para graficar.")
 
     with right_chart:
         st.caption("Calificación por tipo de oferta")
-        if not offer_metrics.empty:
+
+        if offer_metrics.empty:
+            st.info("No hay datos de tipo de oferta.")
+        else:
             chart_df = offer_metrics.set_index("tipo_oferta")
+
             st.bar_chart(
                 chart_df["promedio_estrellas"],
                 color="#14b8a6",
                 use_container_width=True,
             )
+
             st.dataframe(
                 offer_metrics.rename(
                     columns={
@@ -532,13 +595,13 @@ def render_dashboard(
                 use_container_width=True,
                 hide_index=True,
             )
-        else:
-            st.info("No hay datos de tipo de oferta.")
 
     st.caption("Evolución mensual: volumen de reseñas")
+
     if not monthly_trend.empty:
         timeline = monthly_trend.copy()
         timeline["mes"] = pd.to_datetime(timeline["mes"])
+
         st.line_chart(
             timeline.set_index("mes")[
                 ["reviews", "quejas_criticas"]
@@ -556,6 +619,7 @@ def render_dashboard(
                     "quejas_criticas": "Quejas críticas",
                 }
             )
+
             st.dataframe(
                 monthly_display,
                 use_container_width=True,
@@ -656,6 +720,21 @@ def render_dashboard(
     return alerts, top_rated
 
 
+def rating_label(value) -> str:
+    try:
+        rating = int(float(value))
+    except (TypeError, ValueError):
+        return "⚪ Sin calificación"
+
+    if rating in (1, 2):
+        return f"🔴 {rating} ★ · Queja"
+
+    if rating == 3:
+        return "🟡 3 ★ · Neutral"
+
+    return f"🟢 {rating} ★ · Positiva"
+
+
 def render_reviews_table(filters: ReviewFilters) -> None:
     st.markdown(
         '<div class="section-title">🔎 Explorador detallado de reviews</div>',
@@ -664,12 +743,10 @@ def render_reviews_table(filters: ReviewFilters) -> None:
 
     st.caption(
         "La tabla se pagina para proteger rendimiento. Los filtros "
-        "son los mismos del tablero."
+        "fijos del lateral se aplican también aquí."
     )
 
-    controls_left, controls_right, controls_empty = st.columns(
-        [1, 1, 2]
-    )
+    controls_left, controls_right, _ = st.columns([1, 1, 2])
 
     with controls_left:
         page_size = st.selectbox(
@@ -698,7 +775,7 @@ def render_reviews_table(filters: ReviewFilters) -> None:
         st.metric(
             "Reviews encontradas",
             format_number(total_rows),
-            help="Total de filas que cumplen los filtros globales.",
+            help="Total de filas que cumplen los filtros activos.",
         )
 
     nav_left, nav_center, nav_right = st.columns([1, 2, 1])
@@ -715,11 +792,11 @@ def render_reviews_table(filters: ReviewFilters) -> None:
     with nav_center:
         st.markdown(
             (
-                f"<div style='text-align:center; padding:0.45rem;'>"
+                "<div style='text-align:center; padding:0.45rem;'>"
                 f"Página <b>{st.session_state.reviews_current_page}</b> "
                 f"de <b>{total_pages}</b> · "
                 f"Mostrando hasta {page_size} registros"
-                f"</div>"
+                "</div>"
             ),
             unsafe_allow_html=True,
         )
@@ -742,27 +819,32 @@ def render_reviews_table(filters: ReviewFilters) -> None:
         return
 
     compact_reviews = reviews.copy()
-    compact_reviews["comentario_preview"] = (
+
+    compact_reviews["comentario"] = (
         compact_reviews["comentario"]
         .fillna("")
         .astype(str)
         .str.replace(r"\s+", " ", regex=True)
-        .str.slice(0, 140)
+        .str.slice(0, 240)
+    )
+
+    compact_reviews["calificacion_visual"] = (
+        compact_reviews["estrellas"].apply(rating_label)
     )
 
     table_columns = [
         "ml_id",
         "cuenta",
         "fecha_review",
-        "estrellas",
+        "calificacion_visual",
+        "comentario",
+        "titulo_review",
         "estado_meli",
         "titulo_ecom",
         "sku",
         "tipo_publicacion",
         "titulo_meli",
         "tipo_oferta",
-        "titulo_review",
-        "comentario_preview",
     ]
 
     compact_reviews = compact_reviews[table_columns].rename(
@@ -770,15 +852,15 @@ def render_reviews_table(filters: ReviewFilters) -> None:
             "ml_id": "ML_ID",
             "cuenta": "Cuenta",
             "fecha_review": "Fecha review",
-            "estrellas": "Estrellas",
+            "calificacion_visual": "Calificación",
+            "comentario": "Comentario",
+            "titulo_review": "Título review",
             "estado_meli": "Estado Meli",
             "titulo_ecom": "Título e-commerce",
             "sku": "SKU",
             "tipo_publicacion": "Tipo publicación",
             "titulo_meli": "Título Mercado Libre",
             "tipo_oferta": "Tipo oferta",
-            "titulo_review": "Título review",
-            "comentario_preview": "Comentario (vista previa)",
         }
     )
 
@@ -787,49 +869,20 @@ def render_reviews_table(filters: ReviewFilters) -> None:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Estrellas": st.column_config.NumberColumn(
-                format="⭐ %.0f",
-            ),
             "Fecha review": st.column_config.DatetimeColumn(
                 format="DD/MM/YYYY HH:mm",
             ),
-            "Comentario (vista previa)": st.column_config.TextColumn(
+            "Calificación": st.column_config.TextColumn(
+                width="medium",
+            ),
+            "Comentario": st.column_config.TextColumn(
                 width="large",
+            ),
+            "Título review": st.column_config.TextColumn(
+                width="medium",
             ),
         },
     )
-
-    st.markdown("#### Ver comentario completo")
-
-    selected_position = st.selectbox(
-        "Selecciona una review de esta página",
-        options=range(len(reviews)),
-        format_func=lambda index: (
-            f"{index + 1}. "
-            f"{reviews.iloc[index]['ml_id']} · "
-            f"{reviews.iloc[index]['fecha_review']} · "
-            f"⭐ {reviews.iloc[index]['estrellas']}"
-        ),
-        key="reviews_detail_selector",
-    )
-
-    selected_review = reviews.iloc[selected_position]
-
-    with st.container(border=True):
-        st.markdown(
-            f"**ML_ID:** `{selected_review['ml_id']}` · "
-            f"**Cuenta:** {selected_review['cuenta']} · "
-            f"**Fecha:** {selected_review['fecha_review']} · "
-            f"**Calificación:** ⭐ {selected_review['estrellas']}"
-        )
-
-        st.markdown(
-            f"**Título:** {selected_review['titulo_review'] or 'Sin título'}"
-        )
-
-        st.markdown(
-            selected_review["comentario"] or "Sin comentario."
-        )
 
 
 def run():
