@@ -145,6 +145,11 @@ def build_navigation():
             title="Chatbot de Reviews",
             icon="💬",
         ),
+        st.Page(
+            "modules/reviews_diagnostic.py",
+            title="reviews_diagnostic",
+            icon="💬",
+        ),
      ]
 
 
