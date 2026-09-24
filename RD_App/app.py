@@ -141,16 +141,11 @@ def build_navigation():
             icon="🚚",
         ),
         st.Page(
-            "modules/chatbot_reviews.py",
-            title="Chatbot de Reviews",
-            icon="💬",
+            "modules/reviews_dashboard.py",
+            title="Reviews Intelligence",
+            icon="⭐",
         ),
-        st.Page(
-            "modules/reviews_diagnostic.py",
-            title="reviews_diagnostic",
-            icon="💬",
-        ),
-     ]
+    ]
 
 
 restore_session_if_needed()
