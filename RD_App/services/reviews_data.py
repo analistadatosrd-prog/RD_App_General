@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
-from typing import Any
+from typing import Any, Iterator
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
 TABLE_NAME = "public.rd_tabla_reviews"
+AI_REVIEW_COLUMNS = (
+    "row_id", "ml_id", "cuenta", "fecha_review", "estrellas",
+    "titulo_review", "comentario", "titulo_ecom", "sku",
+    "tipo_publicacion", "titulo_meli", "tipo_oferta",
+)
 
 
 @st.cache_resource
@@ -219,11 +224,11 @@ def get_reviews_page(
     params.update({"limit": safe_page_size, "offset": (safe_page - 1) * safe_page_size})
     count_query = text(f"SELECT COUNT(*) AS total FROM {TABLE_NAME} WHERE {where_sql}")
     page_query = text(f"""
-        SELECT ml_id, cuenta, fecha_review, estrellas, estado_meli,
+        SELECT row_id, ml_id, cuenta, fecha_review, estrellas, estado_meli,
                titulo_ecom, sku, tipo_publicacion, titulo_meli, tipo_oferta,
                titulo_review, comentario
         FROM {TABLE_NAME} WHERE {where_sql}
-        ORDER BY fecha_review DESC, ml_id ASC LIMIT :limit OFFSET :offset
+        ORDER BY fecha_review DESC, row_id ASC LIMIT :limit OFFSET :offset
     """)
     with get_reviews_engine().connect() as connection:
         total = connection.execute(count_query, params).scalar_one()
@@ -231,31 +236,74 @@ def get_reviews_page(
     return reviews, int(total)
 
 
-def get_ai_review_sample(
-    filters: ReviewFilters, limit_per_group: int = 15
-) -> pd.DataFrame:
-    """Devuelve hasta 45 comentarios reales del universo filtrado, sin alterar métricas."""
+def _ai_text_condition() -> str:
+    return "(NULLIF(BTRIM(titulo_review), '') IS NOT NULL OR NULLIF(BTRIM(comentario), '') IS NOT NULL)"
+
+
+def _ai_evidence_where(filters: ReviewFilters) -> tuple[str, dict[str, Any]]:
     where_sql, params = build_where_clause(filters)
-    params = {**params, "group_limit": min(max(int(limit_per_group), 1), 20)}
-    columns = """
-        ml_id, cuenta, fecha_review, estrellas, titulo_review, comentario,
-        titulo_ecom, sku, tipo_publicacion, titulo_meli, tipo_oferta
-    """
+    return f"({where_sql}) AND {_ai_text_condition()}", params
+
+
+def get_ai_context_metrics(filters: ReviewFilters) -> dict[str, Any]:
+    """Métricas SQL exactas del universo filtrado; sin llamadas a IA ni cache."""
+    where_sql, params = build_where_clause(filters)
     query = text(f"""
-        (SELECT {columns} FROM {TABLE_NAME}
-         WHERE ({where_sql}) AND estrellas IN (1, 2)
-           AND NULLIF(BTRIM(comentario), '') IS NOT NULL
-         ORDER BY fecha_review DESC, ml_id ASC LIMIT :group_limit)
-        UNION ALL
-        (SELECT {columns} FROM {TABLE_NAME}
-         WHERE ({where_sql}) AND estrellas = 3
-           AND NULLIF(BTRIM(comentario), '') IS NOT NULL
-         ORDER BY fecha_review DESC, ml_id ASC LIMIT :group_limit)
-        UNION ALL
-        (SELECT {columns} FROM {TABLE_NAME}
-         WHERE ({where_sql}) AND estrellas IN (4, 5)
-           AND NULLIF(BTRIM(comentario), '') IS NOT NULL
-         ORDER BY fecha_review DESC, ml_id ASC LIMIT :group_limit)
+        SELECT COUNT(*) AS total_reviews,
+               COUNT(*) FILTER (WHERE {_ai_text_condition()}) AS reviews_con_texto,
+               COUNT(DISTINCT ml_id) AS publicaciones_unicas,
+               COUNT(DISTINCT sku) AS skus_unicos,
+               ROUND(AVG(estrellas)::numeric, 2) AS promedio_estrellas,
+               COUNT(*) FILTER (WHERE estrellas = 1) AS estrellas_1,
+               COUNT(*) FILTER (WHERE estrellas = 2) AS estrellas_2,
+               COUNT(*) FILTER (WHERE estrellas = 3) AS estrellas_3,
+               COUNT(*) FILTER (WHERE estrellas = 4) AS estrellas_4,
+               COUNT(*) FILTER (WHERE estrellas = 5) AS estrellas_5,
+               COUNT(*) FILTER (WHERE estrellas IN (1, 2)) AS quejas_criticas,
+               COUNT(*) FILTER (WHERE estrellas IN (4, 5)) AS positivas,
+               MIN(fecha_review) AS primera_fecha,
+               MAX(fecha_review) AS ultima_fecha
+        FROM {TABLE_NAME} WHERE {where_sql}
     """)
     with get_reviews_engine().connect() as connection:
-        return pd.read_sql(query, connection, params=params)
+        return dict(connection.execute(query, params).mappings().one())
+
+
+def count_ai_evidence_reviews(filters: ReviewFilters) -> int:
+    """Cuenta exactamente las filas con título o comentario disponibles para análisis."""
+    where_sql, params = _ai_evidence_where(filters)
+    query = text(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE {where_sql}")
+    with get_reviews_engine().connect() as connection:
+        return int(connection.execute(query, params).scalar_one())
+
+
+def iter_ai_review_batches(
+    filters: ReviewFilters, batch_size: int = 200
+) -> Iterator[list[dict[str, Any]]]:
+    """Lee toda la evidencia filtrada en lotes, sin muestreo ni escrituras.
+
+    Mantén el generador abierto mientras consumes cada lote. Para consultas largas,
+    las inserciones posteriores al inicio de la lectura no forman parte del cursor;
+    calcula la cobertura a partir de las filas realmente recorridas.
+    """
+    safe_batch_size = int(batch_size)
+    if not 1 <= safe_batch_size <= 1_000:
+        raise ValueError("batch_size debe estar entre 1 y 1000.")
+    where_sql, params = _ai_evidence_where(filters)
+    query = text(f"""
+        SELECT {', '.join(AI_REVIEW_COLUMNS)}
+        FROM {TABLE_NAME}
+        WHERE {where_sql}
+        ORDER BY row_id ASC
+    """)
+    with get_reviews_engine().connect() as connection:
+        streaming = connection.execution_options(yield_per=safe_batch_size)
+        result = streaming.execute(query, params).mappings()
+        try:
+            while True:
+                rows = result.fetchmany(safe_batch_size)
+                if not rows:
+                    break
+                yield [dict(row) for row in rows]
+        finally:
+            result.close()
