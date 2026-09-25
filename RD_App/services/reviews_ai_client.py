@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import math
+import re
 from dataclasses import asdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -154,19 +154,51 @@ def _metrics_context(metrics: dict[str, Any], filters: ReviewFilters) -> str:
     return context
 
 
+def _direct_metric_answer(question: str, metrics: dict[str, Any]) -> str | None:
+    q = re.sub(r"[^a-z0-9\s]", " ", question.casefold().translate(str.maketrans("áéíóúü", "aeiouu")))
+    q = " ".join(q.split())
+    if not re.search(r"\b(cuant[oa]s?|numero|cantidad|total|promedio|media|cuantas)\b", q):
+        return None
+    if re.search(r"\b(por que|porque|motivos?|razones?|causas?|comentarios?|dicen|mencionan|temas?|problemas?)\b", q):
+        return None
+    if re.search(r"\b(por|de|con)\s+(mes|semana|dia|fecha|anio|ano|periodo|cuenta|oferta|sku|producto|publicacion|ml id)\b", q):
+        return None
+    if re.search(r"\b(una|un|1|dos|2|tres|3|cuatro|4|cinco|5)\s+estrellas?\b", q):
+        match = re.search(r"\b(una|un|1|dos|2|tres|3|cuatro|4|cinco|5)\s+estrellas?\b", q)
+        number = {"una": 1, "un": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5}.get(match.group(1), match.group(1))
+        return f"Hay {int(metrics[f'estrellas_{number}'] or 0):,} reviews de {number} estrella(s) con los filtros actuales."
+    if re.search(r"\b(criticas?|negativas?|quejas?)\b", q):
+        return f"Hay {int(metrics['quejas_criticas'] or 0):,} reviews críticas (1–2 estrellas) con los filtros actuales."
+    if re.search(r"\b(positivas?|satisfech[oa]s?)\b", q):
+        return f"Hay {int(metrics['positivas'] or 0):,} reviews positivas (4–5 estrellas) con los filtros actuales."
+    if re.search(r"\b(promedio|media)\b", q) and re.search(r"\b(estrellas?|calificacion|rating)\b", q):
+        value = metrics.get("promedio_estrellas")
+        return f"El promedio de calificación es {value if value is not None else 'N/D'} de 5 estrellas para los filtros actuales."
+    if re.search(r"\b(publicaciones?|ml ids?)\b", q):
+        return f"Hay {int(metrics['publicaciones_unicas'] or 0):,} publicaciones únicas con los filtros actuales."
+    if re.search(r"\b(skus?)\b", q):
+        return f"Hay {int(metrics['skus_unicos'] or 0):,} SKU únicos asociados a las reviews filtradas."
+    if re.search(r"\b(reviews?|resenas?|opiniones?)\b", q) and re.search(r"\b(cuant[oa]s?|numero|cantidad|total)\b", q):
+        return f"Tenemos {int(metrics['total_reviews'] or 0):,} reviews en el universo filtrado actual."
+    return None
+
+
 def answer_reviews_question(
     question: str, filters: ReviewFilters, progress: Callable[[str], None]
 ) -> tuple[str, str]:
     if not question.strip() or len(question) > 2000:
         raise AIQueryError("Escribe una pregunta de entre 1 y 2000 caracteres.")
-    _api_config()
     progress("Consultando métricas exactas en Neon…")
     metrics = get_ai_context_metrics(filters)
     total = int(metrics["total_reviews"] or 0)
     expected = int(metrics["reviews_con_texto"] or 0)
     if total == 0:
         return "No se encontraron reviews con los filtros activos.", "0 reviews filtradas."
+    direct_answer = _direct_metric_answer(question, metrics)
+    if direct_answer is not None:
+        return direct_answer, f"Fuente: COUNT/AVG de SQL sobre {total:,} reviews filtradas. No se llamó a Vertex AI."
 
+    _api_config()
     metrics_text = _metrics_context(metrics, filters)
     findings: list[dict[str, Any]] = []
     analyzed = 0
