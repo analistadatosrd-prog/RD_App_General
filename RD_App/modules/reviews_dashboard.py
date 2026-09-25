@@ -7,6 +7,7 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
+from services.reviews_ai_client import AIQueryError, answer_reviews_question, filter_signature
 from services.reviews_data import (
     ReviewFilters,
     get_alerts,
@@ -106,7 +107,7 @@ def render_filters() -> ReviewFilters:
     with st.sidebar:
         st.markdown(
             '<div class="reviews-filter-panel"><h3>🎛️ Filtros de Reviews</h3>'
-            '<p>Se aplican al tablero, alertas y explorador.</p></div>',
+            '<p>Se aplican al tablero, alertas, chat y explorador.</p></div>',
             unsafe_allow_html=True,
         )
         quick_range = st.selectbox(
@@ -329,6 +330,56 @@ def render_dashboard(filters: ReviewFilters) -> None:
             )
 
 
+def render_reviews_chat(filters: ReviewFilters) -> None:
+    st.markdown('<div class="section-title">🤖 Pregunta a las reviews</div>',
+                unsafe_allow_html=True)
+    st.caption(
+        "Respuestas bajo demanda sobre los filtros activos. Para preguntas amplias puede tardar; "
+        "se muestran estados de trabajo y cobertura real. Los ejemplos citan row_id."
+    )
+    signature = filter_signature(filters)
+    if st.session_state.get("reviews_chat_signature") != signature:
+        st.session_state.reviews_chat_signature = signature
+        st.session_state.reviews_chat_messages = []
+        st.info("Filtros actualizados: conversación nueva para este universo.")
+    messages = st.session_state.reviews_chat_messages
+    if st.button("Limpiar conversación", key="reviews_chat_clear"):
+        st.session_state.reviews_chat_messages = []
+        st.rerun()
+    for message in messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if message.get("coverage"):
+                st.caption(message["coverage"])
+    question = st.chat_input("Pregunta sobre las reviews filtradas…", key="reviews_question_input")
+    if not question:
+        return
+    if not question.strip() or len(question) > 2000:
+        st.warning("Escribe una pregunta de entre 1 y 2000 caracteres.")
+        return
+    messages.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.markdown(question)
+    with st.chat_message("assistant"):
+        with st.status("Consultando reviews…", expanded=True) as status:
+            try:
+                def progress(label: str) -> None:
+                    status.update(label=label, state="running")
+                answer, coverage = answer_reviews_question(question, filters, progress)
+            except AIQueryError as exc:
+                status.update(label="Análisis interrumpido", state="error")
+                st.error(str(exc))
+                return
+            except Exception:
+                status.update(label="Análisis interrumpido", state="error")
+                st.error("No se pudo completar el análisis. Revisa los logs de Streamlit y Cloud Run.")
+                raise
+            status.update(label="Consulta completada", state="complete", expanded=False)
+        st.markdown(answer)
+        st.caption(coverage)
+    messages.append({"role": "assistant", "content": answer, "coverage": coverage})
+
+
 def rating_label(value) -> str:
     if value is None or pd.isna(value):
         return "⚪ Sin calificación"
@@ -414,12 +465,13 @@ def run() -> None:
     inject_styles()
     st.markdown(
         '<div class="reviews-hero"><h1>⭐ Reviews Intelligence</h1>'
-        '<p>Tablero verificable, alertas de calidad y explorador paginado '
+        '<p>Tablero verificable, alertas de calidad, chat y explorador paginado '
         'de reseñas de Mercado Libre.</p></div>', unsafe_allow_html=True,
     )
     try:
         filters = render_filters()
         render_dashboard(filters)
+        render_reviews_chat(filters)
         render_reviews_table(filters)
     except Exception:
         st.error("No fue posible cargar Reviews Intelligence. Revisa los logs de la aplicación.")
