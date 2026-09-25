@@ -9,6 +9,7 @@ import streamlit as st
 
 from services.reviews_data import (
     ReviewFilters,
+    get_ai_review_sample,
     get_alerts,
     get_dashboard_metrics,
     get_date_bounds,
@@ -329,6 +330,22 @@ def render_dashboard(filters: ReviewFilters) -> None:
             )
 
 
+def render_ai_sample_diagnostic(filters: ReviewFilters) -> None:
+    with st.expander("🧪 Diagnóstico temporal de evidencia IA"):
+        st.caption("No llama a Gemini. Comprueba únicamente qué filas reales recupera SQL.")
+        if st.button("Probar muestra filtrada", key="test_ai_sample"):
+            sample = get_ai_review_sample(filters)
+            st.write("Comentarios recuperados:", len(sample))
+            if sample.empty:
+                st.info("No se encontraron comentarios con los filtros activos.")
+            else:
+                st.dataframe(
+                    sample[["ml_id", "cuenta", "fecha_review", "estrellas", "titulo_review"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+
 def rating_label(value) -> str:
     if value is None or pd.isna(value):
         return "⚪ Sin calificación"
@@ -420,6 +437,7 @@ def run() -> None:
     try:
         filters = render_filters()
         render_dashboard(filters)
+        render_ai_sample_diagnostic(filters)
         render_reviews_table(filters)
     except Exception:
         st.error("No fue posible cargar Reviews Intelligence. Revisa los logs de la aplicación.")
