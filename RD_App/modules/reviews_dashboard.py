@@ -331,53 +331,54 @@ def render_dashboard(filters: ReviewFilters) -> None:
 
 
 def render_reviews_chat(filters: ReviewFilters) -> None:
-    st.markdown('<div class="section-title">🤖 Pregunta a las reviews</div>',
-                unsafe_allow_html=True)
-    st.caption(
-        "Respuestas bajo demanda sobre los filtros activos. Para preguntas amplias puede tardar; "
-        "se muestran estados de trabajo y cobertura real. Los ejemplos citan row_id."
-    )
     signature = filter_signature(filters)
     if st.session_state.get("reviews_chat_signature") != signature:
         st.session_state.reviews_chat_signature = signature
         st.session_state.reviews_chat_messages = []
-        st.info("Filtros actualizados: conversación nueva para este universo.")
-    messages = st.session_state.reviews_chat_messages
-    if st.button("Limpiar conversación", key="reviews_chat_clear"):
-        st.session_state.reviews_chat_messages = []
-        st.rerun()
-    for message in messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if message.get("coverage"):
-                st.caption(message["coverage"])
-    question = st.chat_input("Pregunta sobre las reviews filtradas…", key="reviews_question_input")
-    if not question:
-        return
-    if not question.strip() or len(question) > 2000:
-        st.warning("Escribe una pregunta de entre 1 y 2000 caracteres.")
-        return
-    messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
-    with st.chat_message("assistant"):
-        with st.status("Consultando reviews…", expanded=True) as status:
-            try:
-                def progress(label: str) -> None:
-                    status.update(label=label, state="running")
-                answer, coverage = answer_reviews_question(question, filters, progress)
-            except AIQueryError as exc:
-                status.update(label="Análisis interrumpido", state="error")
-                st.error(str(exc))
+
+    left, right = st.columns([5, 2])
+    with right:
+        with st.popover("💬 Preguntar a las reviews", use_container_width=True):
+            st.subheader("🤖 Asistente de reviews")
+            st.caption("Universo: filtros activos · los conteos simples se consultan en Neon.")
+            if st.button("Limpiar conversación", key="reviews_chat_clear"):
+                st.session_state.reviews_chat_messages = []
+                st.rerun()
+            with st.container(height=380):
+                for message in st.session_state.reviews_chat_messages:
+                    with st.chat_message(message["role"]):
+                        st.markdown(message["content"])
+                        if message.get("coverage"):
+                            st.caption(message["coverage"])
+            question = st.chat_input("Pregunta sobre las reviews…", key="reviews_question_input")
+            if not question:
                 return
-            except Exception:
-                status.update(label="Análisis interrumpido", state="error")
-                st.error("No se pudo completar el análisis. Revisa los logs de Streamlit y Cloud Run.")
-                raise
-            status.update(label="Consulta completada", state="complete", expanded=False)
-        st.markdown(answer)
-        st.caption(coverage)
-    messages.append({"role": "assistant", "content": answer, "coverage": coverage})
+            if not question.strip() or len(question) > 2000:
+                st.warning("Escribe una pregunta de entre 1 y 2000 caracteres.")
+                return
+            st.session_state.reviews_chat_messages.append({"role": "user", "content": question})
+            with st.chat_message("user"):
+                st.markdown(question)
+            with st.chat_message("assistant"):
+                with st.status("Consultando reviews…", expanded=True) as status:
+                    try:
+                        def progress(label: str) -> None:
+                            status.update(label=label, state="running")
+                        answer, coverage = answer_reviews_question(question, filters, progress)
+                    except AIQueryError as exc:
+                        status.update(label="Análisis interrumpido", state="error")
+                        st.error(str(exc))
+                        return
+                    except Exception:
+                        status.update(label="Análisis interrumpido", state="error")
+                        st.error("No se pudo completar el análisis. Revisa los logs de Streamlit y Cloud Run.")
+                        raise
+                    status.update(label="Consulta completada", state="complete", expanded=False)
+                st.markdown(answer)
+                st.caption(coverage)
+            st.session_state.reviews_chat_messages.append(
+                {"role": "assistant", "content": answer, "coverage": coverage}
+            )
 
 
 def rating_label(value) -> str:
@@ -470,8 +471,8 @@ def run() -> None:
     )
     try:
         filters = render_filters()
-        render_dashboard(filters)
         render_reviews_chat(filters)
+        render_dashboard(filters)
         render_reviews_table(filters)
     except Exception:
         st.error("No fue posible cargar Reviews Intelligence. Revisa los logs de la aplicación.")
