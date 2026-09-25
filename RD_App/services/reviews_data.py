@@ -244,4 +244,18 @@ def get_ai_review_sample(
     query = text(f"""
         (SELECT {columns} FROM {TABLE_NAME}
          WHERE ({where_sql}) AND estrellas IN (1, 2)
-        
+           AND NULLIF(BTRIM(comentario), '') IS NOT NULL
+         ORDER BY fecha_review DESC, ml_id ASC LIMIT :group_limit)
+        UNION ALL
+        (SELECT {columns} FROM {TABLE_NAME}
+         WHERE ({where_sql}) AND estrellas = 3
+           AND NULLIF(BTRIM(comentario), '') IS NOT NULL
+         ORDER BY fecha_review DESC, ml_id ASC LIMIT :group_limit)
+        UNION ALL
+        (SELECT {columns} FROM {TABLE_NAME}
+         WHERE ({where_sql}) AND estrellas IN (4, 5)
+           AND NULLIF(BTRIM(comentario), '') IS NOT NULL
+         ORDER BY fecha_review DESC, ml_id ASC LIMIT :group_limit)
+    """)
+    with get_reviews_engine().connect() as connection:
+        return pd.read_sql(query, connection, params=params)
