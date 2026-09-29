@@ -39,11 +39,11 @@ CUENTAS_TAXES_PERCENTAGE = {
 CREDENCIALES_ADICIONALES = {
     "rd_chile": {
         "email_address": "analista.datoschile@outlook.com",
-        "password": "Data.2025**",
+        "password": st.secrets["ECOM_FOXY_CHILE_PASSWORD"],
     },
     "rd_mexico": {
         "email_address": "analista.datosmxn@outlook.com",
-        "password": "Data.2025**",
+        "password": st.secrets["ECOM_FOXY_MEXICO_PASSWORD"],
     },
 }
 
@@ -852,7 +852,7 @@ def build_outputs(df_listings, df_products, status_callback=None):
             ),
             unidades_totales=("unidades", "sum"),
             costo_total_mla=("costo_total_sku", "sum"),
-            iva=("iva", "max"),
+            iva=("iva", "min"),
             cant_sku=("sku", "nunique"),
         )
     )
@@ -1448,7 +1448,7 @@ def consultar_datos_con_multiples_sesiones(status_callback=None):
             ),
             iva=(
                 "iva",
-                "max",
+                "min",
             ),
             cant_sku=(
                 "sku",
