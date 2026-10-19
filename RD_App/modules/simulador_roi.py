@@ -1,728 +1,396 @@
+from __future__ import annotations
+
+import math
+from decimal import Decimal, ROUND_CEILING
+import html
+
 import pandas as pd
 import streamlit as st
 
-from services.db import fetch_all, fetch_one
-from services.ecom_client import (
-    build_outputs,
-    fetch_ml_listings_fast,
-    fetch_products_fast,
-)
+from services.db import fetch_all
+from services.ecom_client import build_outputs, fetch_ml_listings_fast, fetch_products_fast
 
-st.title("Simulador ROI")
-st.caption("Simulación de rentabilidad sobre publicaciones de Mercado Libre.")
-st.markdown("---")
-
+IVA_PAIS = {"AR": 0.21, "CL": 0.19, "MX": 0.16}
+MONEDA = {"AR": "ARS", "CL": "CLP", "MX": "MXN"}
+# Tasas heredadas del módulo original; no se presuponen vigentes por país.
 CAMPAIGN_CUOTAS = {
-    "Sin cuotas": 0.0000,
-    "3 cuotas": 0.0840,
-    "6 cuotas": 0.1230,
-    "9 cuotas": 0.1570,
-    "12 cuotas": 0.1920,
+    "Sin cuotas": 0.0, "3 cuotas": 0.084, "6 cuotas": 0.123,
+    "9 cuotas": 0.157, "12 cuotas": 0.192,
 }
+# Límites inferiores inclusivos: [inicio, siguiente inicio).
+# Las etiquetas se conservan exactamente como en rd_tabla_costos.
+RANGOS_ENVIO = {
+    "AR": [(0, "Hasta $32.999"), (33000, "De $ 33.000 a $ 49.999"),
+           (50000, "Más de $ 50.000")],
+    "CL": [(0, "Hasta $9.989"), (9990, "De $9.990 a $19.989"),
+           (19990, "Desde $19.990")],
+    "MX": [(0, "De $0 a $98,99"), (99, "De $99 a $198,99"),
+           (199, "De $199 a $298,99"), (299, "De $299 a $498,99"),
+           (499, "De $499 a $998,99"), (999, "Desde $999")],
+}
+RANGOS_UNIDAD_AR = [(0, "Hasta $14.999"), (15000, "De $15.000 a $23.999"),
+                    (24000, "De $24.000 a $32.999"), (33000, "No Aplica")]
 
 
-def clasificar_rango_envio(precio):
-    if precio <= 32999:
-        return "Hasta $32.999"
-    elif precio <= 49999:
-        return "De $ 33.000 a $ 49.999"
-    else:
-        return "Más de $ 50.000"
-
-
-def clasificar_rango_und(precio):
-    if precio <= 15999:
-        return "Hasta $15.999"
-    elif precio <= 23999:
-        return "De $16.000 a $23.999"
-    elif precio <= 32999:
-        return "De $24.000 a $32.999"
-    else:
-        return "No Aplica"
-
-
-def lookup_costo_und(rango_peso, rango_und):
-    row = fetch_one(
-        """
-        SELECT "Costo_por_unidad_vendida"
-        FROM rd_tabla_costos
-        WHERE rango_peso_facturable = %s
-          AND rango_valor_costo_und_vendida = %s
-        LIMIT 1
-        """,
-        (rango_peso, rango_und),
-    )
-    if not row:
-        return 0.0
-    return float(row.get("Costo_por_unidad_vendida") or 0)
-
-
-def lookup_costo_envio(rango_peso, rango_envio):
-    row = fetch_one(
-        """
-        SELECT costo_envio
-        FROM rd_tabla_costos
-        WHERE rango_peso_facturable = %s
-          AND rango_valor_costo_envio = %s
-        LIMIT 1
-        """,
-        (rango_peso, rango_envio),
-    )
-    if not row:
-        return 0.0
-    return float(row.get("costo_envio") or 0)
-
-
-def calcular_rentabilidad(producto, precio_sim, pct_cuotas, incluir_envio: bool):
-    costo_fijo = float(producto.get("costo_fijo_ecom") or 0)
-    pct_venta = float(producto.get("pct_costo_venta") or 0)
-    iva_tasa = float(producto.get("iva_venta") or 0)
-    rango_peso = producto.get("rango_peso_facturable")
-
-    rango_envio = clasificar_rango_envio(precio_sim)
-    rango_und = clasificar_rango_und(precio_sim)
-
-    if incluir_envio:
-        costo_envio_sim = lookup_costo_envio(rango_peso, rango_envio)
-    else:
-        costo_envio_sim = 0.0
-
-    if rango_und != "No Aplica":
-        costo_und_sim = lookup_costo_und(rango_peso, rango_und)
-    else:
-        costo_und_sim = 0.0
-
-    factor_iva = 1.0 + (iva_tasa or 0.0)
-    if factor_iva <= 0:
-        base_imponible = precio_sim
-        valor_iva_sim = 0.0
-    else:
-        base_imponible = precio_sim / factor_iva
-        valor_iva_sim = precio_sim - base_imponible
-
-    costo_cuotas_sim = pct_cuotas * precio_sim
-    costo_venta_var = pct_venta * precio_sim
-    costo_venta_sim = costo_cuotas_sim + costo_venta_var + costo_und_sim
-
-    rentabilidad_sim = (
-        precio_sim
-        - costo_fijo
-        - valor_iva_sim
-        - (costo_envio_sim / 1.21)
-        - (costo_venta_sim / 1.21)
-    )
-    pct_rent_sim = (rentabilidad_sim / costo_fijo * 100) if costo_fijo else 0
-
-    return {
-        "precio_venta_final_sim": round(precio_sim, 2),
-        "costo_fijo_sim": round(costo_fijo, 2),
-        "valor_iva_sim": round(valor_iva_sim, 2),
-        "costo_envio_sim": round(costo_envio_sim, 2),
-        "pct_costo_venta_sim": round(pct_venta * 100, 2),
-        "pct_costo_cuotas_sim": round(pct_cuotas * 100, 2),
-        "costo_venta_sim": round(costo_venta_sim, 2),
-        "costo_und_vendida_sim": round(costo_und_sim, 2),
-        "rentabilidad_sim": round(rentabilidad_sim, 2),
-        "pct_rentabilidad_sim": round(pct_rent_sim, 2),
-        "rango_envio_sim": rango_envio,
-        "rango_und_sim": rango_und,
-    }
-
-
-def simular_escenario_2(producto, pct_obj, pct_cuotas, incluir_envio: bool):
-    costo_fijo = float(producto.get("costo_fijo_ecom") or 0)
-    rent_obj = (pct_obj / 100) * costo_fijo
-
-    def f(p):
-        r = calcular_rentabilidad(producto, p, pct_cuotas, incluir_envio)
-        return r["rentabilidad_sim"] - rent_obj
-
-    p_min = costo_fijo
-    p_max = float(producto.get("precio_venta_final") or 0) * 3
-    if p_max <= p_min:
-        p_max = p_min * 5
-    p_mid = p_max
-
-    for _ in range(200):
-        p_mid = (p_min + p_max) / 2
-        valor = f(p_mid)
-        if abs(valor) < 0.5:
-            break
-        if valor > 0:
-            p_max = p_mid
-        else:
-            p_min = p_mid
-
-    return round(p_mid, 2)
-
-
-def fmt(valor):
+def numero(value, campo, default=None):
+    if value is None or pd.isna(value):
+        if default is not None:
+            return float(default)
+        raise ValueError(f"Falta el dato numérico: {campo}.")
     try:
-        return f"$ {float(valor):,.0f}".replace(",", ".")
-    except Exception:
-        return "-"
+        result = float(value)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Dato no numérico: {campo}.") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"Dato no finito: {campo}.")
+    return result
 
 
-def normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+def pais_producto(producto):
+    value = producto.get("country_code")
+    country = "" if value is None or pd.isna(value) else str(value).strip().upper()
+    if country not in IVA_PAIS:
+        raise ValueError("country_code debe ser AR, CL o MX; no se infiere por cuenta o ML ID.")
+    return country
+
+
+def clasificar(precio, rangos):
+    precio = numero(precio, "precio")
+    if precio < 0:
+        raise ValueError("El precio no puede ser negativo.")
+    return next(label for lower, label in reversed(rangos) if precio >= lower)
+
+
+def clasificar_rango_envio(precio, country_code):
+    return clasificar(precio, RANGOS_ENVIO[country_code])
+
+
+def clasificar_rango_und(precio, country_code):
+    return clasificar(precio, RANGOS_UNIDAD_AR) if country_code == "AR" else "No Aplica"
+
+
+def cargar_tarifas():
+    rows = fetch_all('''
+        SELECT country_code, rango_peso_facturable,
+               rango_valor_costo_envio, costo_envio,
+               rango_valor_costo_und_vendida, "Costo_por_unidad_vendida"
+        FROM rd_tabla_costos
+    ''')
+    df = pd.DataFrame(rows or [])
     if df.empty:
-        return df
-
-    df = df.copy()
-
-    if "sku" not in df.columns and "sku_asociados" in df.columns:
-        df["sku"] = df["sku_asociados"]
-
-    if "titulo_ecom" not in df.columns and "titulo_producto" in df.columns:
-        df["titulo_ecom"] = df["titulo_producto"]
-
+        raise ValueError("rd_tabla_costos no tiene tarifas.")
+    for col in ["country_code", "rango_peso_facturable", "rango_valor_costo_envio",
+                "rango_valor_costo_und_vendida"]:
+        df[col] = df[col].fillna("").astype(str).str.strip()
+    df["country_code"] = df["country_code"].str.upper()
     return df
 
 
-def mostrar_comparativo(producto, sim, nombre_campania=""):
-    pct_actual = float(producto.get("pct_rentabilidad") or 0) * 100
-
-    st.markdown(
-        f"#### {producto.get('ml_id', '')}  \n"
-        f"{producto.get('titulo_ecom', '')}"
-    )
-
-    col_actual, col_sim = st.columns(2)
-
-    card_style = (
-        "border:1px solid #444;"
-        "border-radius:6px;"
-        "padding:10px;"
-        "margin-bottom:10px;"
-        "background-color:#111;"
-    )
-    value_green_style = "color:#00c853;font-weight:bold;font-size:1.1rem;"
-
-    with col_actual:
-        st.markdown("Actual")
-        ca1, ca2, ca3 = st.columns(3)
-
-        with ca1:
-            st.markdown(
-                f"""
-                <div style="{card_style}">
-                  <div>Precio</div>
-                  <div style="font-weight:bold;font-size:1.2rem;">{fmt(producto.get('precio_venta_final'))}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        with ca2:
-            st.markdown(
-                f"""
-                <div style="{card_style}">
-                  <div>Rentabilidad</div>
-                  <div style="{value_green_style}">{fmt(producto.get('rentabilidad'))}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        with ca3:
-            st.markdown(
-                f"""
-                <div style="{card_style}">
-                  <div>% Rentabilidad</div>
-                  <div style="{value_green_style}">{pct_actual:.2f}%</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        html_actual = f"""
-        <div style="{card_style}">
-          <table style="width:100%;font-size:0.9rem;">
-            <tr>
-              <td>Costo fijo (final):</td><td>{fmt(producto.get('costo_fijo_ecom'))}</td>
-              <td>Costo venta:</td><td>{fmt(producto.get('costo_venta'))}</td>
-            </tr>
-            <tr>
-              <td>Costo fijo antiguo:</td><td>{fmt(producto.get('costo_fijo_ecom_antiguo'))}</td>
-              <td>Costo fijo nuevo:</td><td>{fmt(producto.get('costo_fijo_ecom_nuevo'))}</td>
-            </tr>
-            <tr>
-              <td>Costo envío:</td><td>{fmt(producto.get('costo_envio'))}</td>
-              <td>dto_meli:</td><td>{fmt(producto.get('dto_meli'))}</td>
-            </tr>
-            <tr>
-              <td>% Costo cuotas:</td><td>{float(producto.get('pct_costo_cuotas') or 0) * 100:.2f}%</td>
-              <td>Devolución meli:</td><td>{fmt(producto.get('devolucion_dto_meli'))}</td>
-            </tr>
-            <tr>
-              <td>Costo und vendida:</td><td>{fmt(producto.get('costo_und_vendida'))}</td>
-              <td>Campaña cuotas:</td><td>{nombre_campania or 'Sin cuotas'}</td>
-            </tr>
-            <tr>
-              <td>IVA:</td><td>{fmt(producto.get('valor_iva'))}</td>
-              <td>% Costo venta:</td><td>{float(producto.get('pct_costo_venta') or 0) * 100:.2f}%</td>
-            </tr>
-          </table>
-        </div>
-        """
-        st.markdown(html_actual, unsafe_allow_html=True)
-
-    with col_sim:
-        st.markdown("Simulado")
-        cs1, cs2, cs3 = st.columns(3)
-
-        with cs1:
-            st.markdown(
-                f"""
-                <div style="{card_style}">
-                  <div>Precio</div>
-                  <div style="font-weight:bold;font-size:1.2rem;">{fmt(sim['precio_venta_final_sim'])}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        with cs2:
-            st.markdown(
-                f"""
-                <div style="{card_style}">
-                  <div>Rentabilidad</div>
-                  <div style="{value_green_style}">{fmt(sim['rentabilidad_sim'])}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        with cs3:
-            st.markdown(
-                f"""
-                <div style="{card_style}">
-                  <div>% Rentabilidad</div>
-                  <div style="{value_green_style}">{sim['pct_rentabilidad_sim']:.2f}%</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        html_sim = f"""
-        <div style="{card_style}">
-          <table style="width:100%;font-size:0.9rem;">
-            <tr>
-              <td>Costo fijo:</td><td>{fmt(sim['costo_fijo_sim'])}</td>
-              <td>Costo venta:</td><td>{fmt(sim['costo_venta_sim'])}</td>
-            </tr>
-            <tr>
-              <td>Costo envío:</td><td>{fmt(sim['costo_envio_sim'])}</td>
-              <td>dto_meli:</td><td>$ 0</td>
-            </tr>
-            <tr>
-              <td>% Costo cuotas:</td><td>{sim['pct_costo_cuotas_sim']:.2f}%</td>
-              <td>Devolución meli:</td><td>$ 0</td>
-            </tr>
-            <tr>
-              <td>Costo und vendida:</td><td>{fmt(sim['costo_und_vendida_sim'])}</td>
-              <td>Campaña cuotas:</td><td>{nombre_campania or 'Sin cuotas'}</td>
-            </tr>
-            <tr>
-              <td>IVA:</td><td>{fmt(sim['valor_iva_sim'])}</td>
-              <td>% Costo venta:</td><td>{sim['pct_costo_venta_sim']:.2f}%</td>
-            </tr>
-          </table>
-        </div>
-        """
-        st.markdown(html_sim, unsafe_allow_html=True)
-
-    diff_rent = sim["rentabilidad_sim"] - float(producto.get("rentabilidad") or 0)
-    diff_pct = sim["pct_rentabilidad_sim"] - pct_actual
-
-    col_v1, col_v2 = st.columns(2)
-    with col_v1:
-        if diff_rent >= 0:
-            st.success(f"💲 Variación Rentabilidad: +{fmt(diff_rent)}")
-        else:
-            st.error(f"💲 Variación Rentabilidad: {fmt(diff_rent)}")
-
-    with col_v2:
-        if diff_pct >= 0:
-            st.success(f"📈 Variación % Rentabilidad: +{diff_pct:.2f}%")
-        else:
-            st.error(f"📉 Variación % Rentabilidad: {diff_pct:.2f}%")
+def buscar_tarifa(tarifas, country, peso, columna_rango, rango, columna_costo):
+    peso = "" if peso is None or pd.isna(peso) else str(peso).strip()
+    mask = ((tarifas["country_code"] == country)
+            & (tarifas["rango_peso_facturable"] == peso)
+            & (tarifas[columna_rango] == rango))
+    rows = tarifas.loc[mask, columna_costo]
+    if rows.empty:
+        raise ValueError(f"No hay tarifa: {country}, peso '{peso}', rango '{rango}'.")
+    values = pd.to_numeric(rows, errors="coerce")
+    if values.isna().any() or not all(math.isfinite(float(x)) for x in values):
+        raise ValueError(f"Tarifa inválida: {country}, {peso}, {rango}.")
+    unique = values.unique()
+    if len(unique) != 1 or unique[0] < 0:
+        raise ValueError(f"Tarifas contradictorias o negativas: {country}, {peso}, {rango}.")
+    return float(unique[0])
 
 
-def apply_filtros(df, f_ml_id, f_titulo, f_sku, f_ml_sinc, f_estado, f_tipo, f_logistica, f_envio, f_cuenta):
-    if df.empty:
-        return df
-
-    vista = df.copy()
-
-    if f_ml_id.strip():
-        vista = vista[vista["ml_id"].astype(str).str.contains(f_ml_id.strip(), case=False, na=False)]
-
-    if f_titulo.strip():
-        vista = vista[vista["titulo_ecom"].astype(str).str.contains(f_titulo.strip(), case=False, na=False)]
-
-    if f_sku.strip() and "sku" in vista.columns:
-        vista = vista[vista["sku"].astype(str).str.contains(f_sku.strip(), case=False, na=False)]
-
-    if f_ml_sinc.strip() and "ml_id_sincronizados" in vista.columns:
-        vista = vista[
-            vista["ml_id_sincronizados"].astype(str).str.contains(f_ml_sinc.strip(), case=False, na=False)
-        ]
-
-    if f_estado != "Todos" and "estado_meli" in vista.columns:
-        vista = vista[vista["estado_meli"] == f_estado]
-
-    if f_tipo != "Todos" and "tipo_publicacion" in vista.columns:
-        vista = vista[vista["tipo_publicacion"] == f_tipo]
-
-    if f_logistica != "Todas" and "logistica" in vista.columns:
-        vista = vista[vista["logistica"] == f_logistica]
-
-    if f_cuenta != "Todas" and "cuenta" in vista.columns:
-        vista = vista[vista["cuenta"] == f_cuenta]
-
-    if f_envio == "Si" and "envio_gratis" in vista.columns:
-        vista = vista[vista["envio_gratis"] == True]
-    elif f_envio == "No" and "envio_gratis" in vista.columns:
-        vista = vista[vista["envio_gratis"] == False]
-
-    return vista
-
-
-for key, default in [
-    ("df_base", pd.DataFrame()),
-    ("df_filtrado", pd.DataFrame()),
-    ("seleccionados", []),
-]:
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-if not st.session_state.get("authenticated"):
-    st.error("No hay una sesión autenticada de EcomExperts.")
-    st.stop()
-
-if st.session_state.df_base.empty:
-    resultados_pg = fetch_all("SELECT * FROM rd_tabla_rentas")
-    if resultados_pg:
-        df_pg = pd.DataFrame(resultados_pg)
-        df_pg = normalizar_dataframe(df_pg)
-        df_pg["costo_fijo_ecom_antiguo"] = df_pg["costo_fijo_ecom"]
-        df_pg["costo_fijo_ecom_nuevo"] = pd.NA
-        st.session_state.df_base = df_pg.copy()
-        st.session_state.df_filtrado = df_pg.copy()
-    else:
-        st.session_state.df_base = pd.DataFrame()
-        st.session_state.df_filtrado = pd.DataFrame()
-
-opciones = fetch_all(
-    """
-    SELECT
-        array_agg(DISTINCT estado_meli) AS estados,
-        array_agg(DISTINCT logistica) AS logisticas,
-        array_agg(DISTINCT tipo_publicacion) AS tipos,
-        array_agg(DISTINCT cuenta) AS cuentas
-    FROM rd_tabla_rentas
-    WHERE estado_meli IS NOT NULL
-    """
-)
-
-estados = sorted([x for x in (opciones[0]["estados"] or []) if x]) if opciones else []
-logisticas = sorted([x for x in (opciones[0]["logisticas"] or []) if x]) if opciones else []
-tipos = sorted([x for x in (opciones[0]["tipos"] or []) if x]) if opciones else []
-cuentas = sorted([x for x in (opciones[0]["cuentas"] or []) if x]) if opciones else []
-
-col_consultar, _ = st.columns([1, 3])
-with col_consultar:
-    btn_consultar = st.button(
-        "Consultar datos (actualizar costos Ecom)",
-        type="primary",
-        use_container_width=True
-    )
-
-if btn_consultar:
-    session = st.session_state.get("ecom_session")
-    if session is None:
-        st.error("La sesión de EcomExperts no es válida. Vuelve a iniciar sesión.")
-        st.stop()
-
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    est_max_pages = 200
-
-    def status_callback(msg: str):
-        if "mlListings - página" in msg:
-            try:
-                num = int(msg.split("página")[1].split("...")[0].strip())
-                pct = min(int(num / est_max_pages * 100), 100)
-                progress_bar.progress(pct)
-                status_text.text(f"Cargando datos desde EcomExperts... página {num} ({pct}%)")
-            except Exception:
-                pass
-
-    with st.spinner("Actualizando costos desde EcomExperts..."):
-        df_listings = fetch_ml_listings_fast(session, status_callback)
-        df_products = fetch_products_fast(session, None)
-        _, final_costos = build_outputs(df_listings, df_products, None)
-
-        df_pg = st.session_state.df_base.copy()
-        if not df_pg.empty and not final_costos.empty:
-            df_costos = final_costos[["mla", "costo_total_mla"]].rename(
-                columns={"mla": "ml_id", "costo_total_mla": "costo_fijo_ecom_nuevo"}
-            )
-            df_pg["ml_id"] = df_pg["ml_id"].astype(str)
-            df_costos["ml_id"] = df_costos["ml_id"].astype(str)
-
-            df_merged = df_pg.merge(df_costos, on="ml_id", how="left", suffixes=("", "_ecom"))
-
-            if "costo_fijo_ecom_nuevo_ecom" in df_merged.columns:
-                df_merged["costo_fijo_ecom_nuevo"] = df_merged["costo_fijo_ecom_nuevo_ecom"].fillna(
-                    df_merged["costo_fijo_ecom_nuevo"]
-                )
-                df_merged.drop(columns=["costo_fijo_ecom_nuevo_ecom"], inplace=True)
-
-            df_merged["costo_fijo_ecom"] = df_merged["costo_fijo_ecom_nuevo"].fillna(
-                df_merged["costo_fijo_ecom_antiguo"]
-            )
-
-            st.session_state.df_base = df_merged.copy()
-            st.session_state.df_filtrado = df_merged.copy()
-            st.session_state.seleccionados = []
-            st.session_state.pop("sim_e1_params", None)
-            st.session_state.pop("sim_e2_params", None)
-
-    progress_bar.progress(100)
-    status_text.text("Actualización completada (100%)")
-    st.success("Costos actualizados correctamente desde EcomExperts.")
-
-st.markdown("### Filtros")
-st.caption("Puedes usar los datos actuales de Postgres o actualizar costos desde Ecom.")
-
-col1, col2, col3, col4, col5 = st.columns(5)
-with col1:
-    f_ml_id = st.text_input("ML ID")
-    f_titulo = st.text_input("Título")
-with col2:
-    f_sku = st.text_input("SKU")
-    f_ml_sinc = st.text_input("ML ID sincronizados")
-with col3:
-    f_estado = st.selectbox("Estado", ["Todos"] + estados)
-    f_tipo = st.selectbox("Tipo publicación", ["Todos"] + tipos)
-with col4:
-    f_logistica = st.selectbox("Logística", ["Todas"] + logisticas)
-    f_envio = st.selectbox("Envío gratis", ["Todos", "Si", "No"])
-with col5:
-    f_cuenta = st.selectbox("Cuenta", ["Todas"] + cuentas)
-
-col_filt, col_lim = st.columns([1, 2])
-with col_filt:
-    btn_filtrar = st.button("Aplicar filtros", use_container_width=True)
-with col_lim:
-    limite = st.selectbox(
-        "Límite de resultados (solo visual)",
-        options=[50, 100, 200, 300, 500, 1000],
-        index=3
-    )
-
-if btn_filtrar:
-    if st.session_state.df_base.empty:
-        st.warning("No hay datos cargados desde Postgres.")
-    else:
-        df_vista = apply_filtros(
-            st.session_state.df_base,
-            f_ml_id,
-            f_titulo,
-            f_sku,
-            f_ml_sinc,
-            f_estado,
-            f_tipo,
-            f_logistica,
-            f_envio,
-            f_cuenta,
-        )
-        if limite:
-            df_vista = df_vista.head(limite)
-        st.session_state.df_filtrado = df_vista.copy()
-        st.session_state.seleccionados = []
-        st.session_state.pop("sim_e1_params", None)
-        st.session_state.pop("sim_e2_params", None)
-
-df_vista = st.session_state.df_filtrado
-
-if df_vista.empty:
-    st.info("No hay datos cargados. Presiona el botón de consulta o revisa la tabla base.")
-    st.stop()
-
-st.markdown(f"**{len(df_vista)} publicaciones en la vista filtrada**")
-st.markdown("---")
-
-df_show = df_vista.copy()
-cols_inicio = [c for c in ["ml_id", "titulo_ecom", "sku"] if c in df_show.columns]
-otras_cols = [c for c in df_show.columns if c not in cols_inicio]
-df_show = df_show[cols_inicio + otras_cols]
-
-for col in [
-    "precio_venta_final",
-    "precio_venta_base",
-    "costo_fijo_ecom",
-    "costo_fijo_ecom_antiguo",
-    "costo_fijo_ecom_nuevo",
-    "costo_envio",
-    "costo_und_vendida",
-    "costo_venta",
-    "valor_iva",
-    "rentabilidad",
-]:
-    if col in df_show.columns:
-        df_show[col] = df_show[col].apply(fmt)
-
-if "pct_rentabilidad" in df_show.columns:
-    df_show["pct_rentabilidad"] = (df_show["pct_rentabilidad"].astype(float) * 100).round(2)
-
-st.dataframe(
-    df_show,
-    use_container_width=True,
-    height=500,
-    column_config={
-        "ml_id": st.column_config.TextColumn("ML ID", width="medium"),
-        "titulo_ecom": st.column_config.TextColumn("Título", width="large"),
-        "sku": st.column_config.TextColumn("SKU", width="medium"),
-        "estado_meli": st.column_config.TextColumn("Estado", width="small"),
-        "tipo_publicacion": st.column_config.TextColumn("Tipo", width="medium"),
-        "logistica": st.column_config.TextColumn("Logística", width="medium"),
-        "envio_gratis": st.column_config.TextColumn("Envío Gratis", width="small"),
-        "campaign_ofrecida": st.column_config.TextColumn("Campaign", width="medium"),
-        "cuenta": st.column_config.TextColumn("Cuenta", width="medium"),
-        "rango_peso_facturable": st.column_config.TextColumn("Rango Peso", width="medium"),
-        "rango_valor_costo_envio": st.column_config.TextColumn("Rango Envío", width="medium"),
-        "rango_valor_costo_und_vendida": st.column_config.TextColumn("Rango Und", width="medium"),
+def calcular_rentabilidad(producto, precio_sim, pct_cuotas, incluir_envio, tarifas):
+    country = pais_producto(producto)
+    precio = numero(precio_sim, "precio simulado")
+    costo = numero(producto.get("costo_fijo_ecom"), "costo_fijo_ecom")
+    venta = numero(producto.get("pct_costo_venta"), "pct_costo_venta")
+    cuotas = numero(pct_cuotas, "pct_cuotas")
+    if precio < 0 or costo <= 0 or not 0 <= venta < 1 or not 0 <= cuotas < 1:
+        raise ValueError("Se requiere costo mayor que cero, precio no negativo y tasas decimales entre 0 y 1.")
+    factor = 1 + IVA_PAIS[country]
+    peso = producto.get("rango_peso_facturable")
+    rango_envio = clasificar_rango_envio(precio, country)
+    rango_und = clasificar_rango_und(precio, country)
+    envio = buscar_tarifa(tarifas, country, peso, "rango_valor_costo_envio",
+                          rango_envio, "costo_envio") if incluir_envio else 0.0
+    unidad = buscar_tarifa(tarifas, country, peso, "rango_valor_costo_und_vendida",
+                           rango_und, "Costo_por_unidad_vendida") if rango_und != "No Aplica" else 0.0
+    iva = precio - precio / factor
+    costo_cuotas = cuotas * precio
+    comision = venta * precio
+    costo_venta = costo_cuotas + comision + unidad
+    renta = precio / factor - costo - envio / factor - costo_venta / factor
+    return {
+        "country_code": country, "moneda": MONEDA[country],
+        "precio_venta_final_sim": precio, "costo_fijo_sim": costo,
+        "valor_iva_sim": iva, "iva_pct_sim": IVA_PAIS[country] * 100,
+        "costo_envio_sim": envio, "costo_und_vendida_sim": unidad,
+        "pct_costo_venta_sim": venta * 100, "pct_costo_cuotas_sim": cuotas * 100,
+        "costo_cuotas_sim": costo_cuotas, "costo_comision_sim": comision,
+        "costo_venta_sim": costo_venta, "rentabilidad_sim": renta,
+        "pct_rentabilidad_sim": renta / costo * 100,
+        "rango_envio_sim": rango_envio, "rango_und_sim": rango_und,
     }
-)
 
-st.markdown("---")
-st.markdown("**Selecciona publicaciones para simular**")
 
-resultados_vista = df_vista.to_dict(orient="records")
-
-col_sel_all, col_des_all = st.columns([1, 1])
-with col_sel_all:
-    if st.button("Seleccionar todas", key="btn_sel_all"):
-        st.session_state.seleccionados = [str(r["ml_id"]) for r in resultados_vista]
-        st.rerun()
-
-with col_des_all:
-    if st.button("Deseleccionar todas", key="btn_des_all"):
-        st.session_state.seleccionados = []
-        st.rerun()
-
-seleccion = st.multiselect(
-    "Publicaciones a simular",
-    options=[str(r["ml_id"]) for r in resultados_vista],
-    format_func=lambda x: next(
-        (
-            f"{r['ml_id']} | {str(r.get('titulo_ecom', ''))[:60]} | "
-            f"{str(r.get('sku', ''))} | {fmt(r.get('precio_venta_final'))}"
-            for r in resultados_vista
-            if str(r["ml_id"]) == x
-        ),
-        x,
-    ),
-    default=st.session_state.seleccionados,
-    key="multiselect_sim",
-    label_visibility="collapsed",
-)
-st.session_state.seleccionados = seleccion
-
-if st.session_state.seleccionados:
-    st.success(f"{len(st.session_state.seleccionados)} publicación(es) seleccionada(s)")
-
-st.markdown("---")
-
-if st.session_state.seleccionados:
-    st.markdown(f"## Simulación de {len(st.session_state.seleccionados)} publicación(es)")
-
-    col_e1, col_e2 = st.columns(2)
-
-    with col_e1:
-        st.markdown("**Escenario 1: Cambio de precio**")
-        with st.form(key="form_e1"):
-            nuevo_precio_global = st.number_input(
-                "Nuevo precio de venta",
-                min_value=0.0,
-                value=0.0,
-                step=1000.0,
-            )
-            campaign_global = st.selectbox("Campaign ofrecida", list(CAMPAIGN_CUOTAS.keys()))
-            envio_e1 = st.selectbox("Envío gratis (simulación)", ["Si", "No"], index=0)
-            simular_e1 = st.form_submit_button("Simular Escenario 1", use_container_width=True)
-
-        if simular_e1:
-            if nuevo_precio_global <= 0:
-                st.error("Ingresa un precio de venta mayor a 0.")
-            else:
-                st.session_state["sim_e1_params"] = {
-                    "precio": nuevo_precio_global,
-                    "campaign": campaign_global,
-                    "envio": envio_e1,
-                    "seleccionados": list(st.session_state.seleccionados),
-                }
-                st.session_state.pop("sim_e2_params", None)
-
-    with col_e2:
-        st.markdown("**Escenario 2: Rentabilidad objetivo**")
-        with st.form(key="form_e2"):
-            pct_obj_global = st.number_input(
-                "Porcentaje de rentabilidad objetivo",
-                min_value=0.0,
-                max_value=500.0,
-                value=30.0,
-                step=1.0,
-            )
-            campaign_global_e2 = st.selectbox("Campaign ofrecida", list(CAMPAIGN_CUOTAS.keys()))
-            envio_e2 = st.selectbox("Envío gratis (simulación)", ["Si", "No"], index=0)
-            simular_e2 = st.form_submit_button("Simular Escenario 2", use_container_width=True)
-
-        if simular_e2:
-            st.session_state["sim_e2_params"] = {
-                "pct_obj": pct_obj_global,
-                "campaign": campaign_global_e2,
-                "envio": envio_e2,
-                "seleccionados": list(st.session_state.seleccionados),
-            }
-            st.session_state.pop("sim_e1_params", None)
-
-    base_records = st.session_state.df_base.to_dict(orient="records")
-
-    if "sim_e1_params" in st.session_state:
-        p = st.session_state["sim_e1_params"]
-        st.markdown("### Resultados Escenario 1")
-        pct_cuotas = CAMPAIGN_CUOTAS[p["campaign"]]
-        incluir_envio = p["envio"] == "Si"
-
-        for ml_id in p["seleccionados"]:
-            producto = next((r for r in base_records if str(r["ml_id"]) == str(ml_id)), None)
-            if not producto:
+def simular_escenario_2(producto, pct_obj, pct_cuotas, incluir_envio, tarifas):
+    country = pais_producto(producto)
+    costo = numero(producto.get("costo_fijo_ecom"), "costo_fijo_ecom")
+    venta = numero(producto.get("pct_costo_venta"), "pct_costo_venta")
+    target_pct = numero(pct_obj, "rentabilidad objetivo")
+    if costo <= 0 or target_pct < 0 or not 0 <= venta < 1 or not 0 <= pct_cuotas < 1:
+        raise ValueError("Costo, objetivo o tasas inválidos.")
+    factor = 1 + IVA_PAIS[country]
+    a = (1 - venta - pct_cuotas) / factor
+    if a <= 0:
+        raise ValueError("No existe solución creciente: comisión más cuotas alcanza o supera el 100%.")
+    target = costo * target_pct / 100
+    limites = {float(x[0]) for x in RANGOS_ENVIO[country]}
+    if country == "AR":
+        limites.update(float(x[0]) for x in RANGOS_UNIDAD_AR)
+    limites = sorted(limites)
+    candidates, errors = [], []
+    for i, low in enumerate(limites):
+        high = limites[i + 1] if i + 1 < len(limites) else math.inf
+        try:
+            r = calcular_rentabilidad(producto, low, pct_cuotas, incluir_envio, tarifas)
+            b = costo + (r["costo_envio_sim"] + r["costo_und_vendida_sim"]) / factor
+            raw = max(low, (target + b) / a)
+            cents = (Decimal(str(raw)) * 100).to_integral_value(rounding=ROUND_CEILING)
+            price = float(cents / 100)
+            if price >= high:
                 continue
+            result = calcular_rentabilidad(producto, price, pct_cuotas, incluir_envio, tarifas)
+            if result["rentabilidad_sim"] + 1e-8 < target:
+                price = round(price + 0.01, 2)
+                if price >= high:
+                    continue
+                result = calcular_rentabilidad(producto, price, pct_cuotas, incluir_envio, tarifas)
+            if result["rentabilidad_sim"] + 1e-8 >= target:
+                candidates.append(price)
+        except ValueError as exc:
+            errors.append(str(exc))
+    if errors:
+        raise ValueError("No se puede garantizar el precio mínimo por tarifas faltantes o inválidas. " + errors[0])
+    if not candidates:
+        raise ValueError("No se encontró precio que alcance la rentabilidad objetivo.")
+    return min(candidates)
 
-            sim = calcular_rentabilidad(producto, p["precio"], pct_cuotas, incluir_envio)
 
-            with st.expander(f"{producto.get('titulo_ecom', '')} | ML: {ml_id}", expanded=True):
-                mostrar_comparativo(producto, sim, nombre_campania=p["campaign"])
+def fmt(value):
+    if value is None or pd.isna(value):
+        return "N/D"
+    return f"$ {float(value):,.2f}"
 
-    if "sim_e2_params" in st.session_state:
-        p = st.session_state["sim_e2_params"]
-        st.markdown("### Resultados Escenario 2")
-        pct_cuotas2 = CAMPAIGN_CUOTAS[p["campaign"]]
-        incluir_envio2 = p["envio"] == "Si"
 
-        for ml_id in p["seleccionados"]:
-            producto = next((r for r in base_records if str(r["ml_id"]) == str(ml_id)), None)
-            if not producto:
+def normalizar_dataframe(df):
+    df = df.copy()
+    for source, dest in [("sku_asociados", "sku"), ("skus_asociados", "sku"),
+                          ("titulo_producto", "titulo_ecom")]:
+        if dest not in df and source in df:
+            df[dest] = df[source]
+    for col in ["ml_id", "cuenta", "sku", "titulo_ecom", "country_code"]:
+        if col not in df:
+            df[col] = ""
+        df[col] = df[col].fillna("").astype(str).str.strip()
+    df["country_code"] = df["country_code"].str.upper()
+    df["costo_fijo_ecom_antiguo"] = df["costo_fijo_ecom"]
+    df["costo_fijo_ecom_nuevo"] = float("nan")
+    df["_roi_key"] = [str(i) for i in range(len(df))]
+    return df
+
+
+def actualizar_costos(df, session):
+    if session is None:
+        raise ValueError("Falta la sesión de EcomExperts.")
+    listings = fetch_ml_listings_fast(session, None)
+    products = fetch_products_fast(session, None)
+    _, costs = build_outputs(listings, products, None)
+    if costs.empty:
+        raise ValueError("EcomExperts no devolvió costos; no se actualizó nada.")
+    if not {"cuenta", "mla", "costo_total_mla"}.issubset(costs.columns):
+        raise ValueError("build_outputs debe devolver cuenta, mla y costo_total_mla.")
+    costs = costs[["cuenta", "mla", "costo_total_mla"]].rename(
+        columns={"mla": "ml_id", "costo_total_mla": "_costo_importado"})
+    for col in ["cuenta", "ml_id"]:
+        costs[col] = costs[col].fillna("").astype(str).str.strip()
+    if costs.duplicated(["cuenta", "ml_id"]).any():
+        raise ValueError("Costos duplicados por cuenta + ML ID; se canceló el cruce.")
+    result = df.merge(costs, on=["cuenta", "ml_id"], how="left", validate="many_to_one")
+    new = pd.to_numeric(result.pop("_costo_importado"), errors="coerce")
+    valid = new.notna() & (new > 0)
+    result.loc[valid, "costo_fijo_ecom_nuevo"] = new[valid]
+    result.loc[valid, "costo_fijo_ecom"] = new[valid]
+    return result, int(valid.sum())
+
+
+def mostrar_comparativo(producto, sim, nombre_campania=""):
+    country = sim["country_code"]
+    st.markdown(f"### {producto.get('ml_id', '')} · {country} / {MONEDA[country]}")
+    st.write(producto.get("titulo_ecom", ""))
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Base PostgreSQL / costo vigente en sesión")
+        st.write("Precio base:", fmt(producto.get("precio_venta_final")))
+        st.write("Costo original:", fmt(producto.get("costo_fijo_ecom_antiguo")))
+        st.write("Costo vigente para simular:", fmt(producto.get("costo_fijo_ecom")))
+        st.write("Rentabilidad histórica:", fmt(producto.get("rentabilidad")))
+        pct = producto.get("pct_rentabilidad")
+        st.write("ROI histórico:", "N/D" if pct is None or pd.isna(pct) else f"{float(pct)*100:.2f}%")
+        st.caption("La rentabilidad histórica se conserva como referencia; no se recalcula al importar costos.")
+    with right:
+        st.subheader("Simulación sin descuentos ni devoluciones")
+        st.metric(f"Precio ({MONEDA[country]})", fmt(sim["precio_venta_final_sim"]))
+        st.metric("Rentabilidad", fmt(sim["rentabilidad_sim"]))
+        st.metric("ROI sobre costo", f"{sim['pct_rentabilidad_sim']:.2f}%")
+        st.write(f"IVA país: {sim['iva_pct_sim']:.0f}% · {nombre_campania}")
+    rows = [
+        ("Costo producto", sim["costo_fijo_sim"]), ("IVA venta", sim["valor_iva_sim"]),
+        ("Envío bruto", sim["costo_envio_sim"]), ("Comisión bruta", sim["costo_comision_sim"]),
+        ("Cuotas bruto", sim["costo_cuotas_sim"]),
+        ("Cargo por unidad bruto (solo AR)", sim["costo_und_vendida_sim"]),
+        ("Costo venta bruto total", sim["costo_venta_sim"]),
+    ]
+    st.dataframe(pd.DataFrame(rows, columns=["Concepto", "Importe"]), hide_index=True, use_container_width=True)
+    st.caption(f"Rango envío: {sim['rango_envio_sim']} · Rango unidad: {sim['rango_und_sim']}")
+
+
+def main():
+    st.title("Simulador ROI · AR / CL / MX")
+    st.caption("IVA por país y tarifas de rd_tabla_costos. Solo lectura: no modifica PostgreSQL.")
+    st.info("Supuesto de cálculo: precio y cargos de envío/venta incluyen el IVA del país; "
+            "el costo del producto ya está expresado en la base neta utilizada por el simulador.")
+    if not st.session_state.get("authenticated"):
+        st.error("No hay una sesión autenticada de EcomExperts.")
+        st.stop()
+    if "roi_base_v2" not in st.session_state:
+        st.session_state.roi_base_v2 = pd.DataFrame()
+    c1, c2 = st.columns(2)
+    reload_db = c1.button("Recargar base y tarifas desde PostgreSQL", use_container_width=True)
+    update_ecom = c2.button("Actualizar costos desde sesión EcomExperts", use_container_width=True)
+    if reload_db or st.session_state.roi_base_v2.empty:
+        try:
+            with st.spinner("Cargando publicaciones y tarifas…"):
+                data = pd.DataFrame(fetch_all("SELECT * FROM rd_tabla_rentas") or [])
+                if data.empty:
+                    st.warning("rd_tabla_rentas está vacía.")
+                    return
+                normalized = normalizar_dataframe(data)
+                tariffs = cargar_tarifas()
+                st.session_state.roi_base_v2 = normalized
+                st.session_state.roi_tarifas_v2 = tariffs
+                st.session_state.pop("roi_results_v2", None)
+                st.session_state.pop("roi_select_v2", None)
+        except Exception as exc:
+            st.error(f"No se pudo cargar: {exc}")
+            return
+    if update_ecom:
+        try:
+            with st.spinner("Consultando costos disponibles en la sesión EcomExperts…"):
+                updated, count = actualizar_costos(st.session_state.roi_base_v2,
+                                                    st.session_state.get("ecom_session"))
+                st.session_state.roi_base_v2 = updated
+                st.session_state.pop("roi_results_v2", None)
+            st.success(f"Costos actualizados en {count} filas; las demás conservan su costo vigente.")
+            st.caption("Solo se consultan las cuentas accesibles por esta sesión; no inicia sesiones adicionales de Chile/México.")
+        except Exception as exc:
+            st.error(f"No se actualizaron costos: {exc}")
+    df = st.session_state.roi_base_v2
+    st.subheader("Filtros")
+    a, b, c, d = st.columns(4)
+    country = a.selectbox("País", ["Todos"] + sorted(df.country_code.unique().tolist()))
+    cuenta = b.selectbox("Cuenta", ["Todas"] + sorted(df.cuenta.unique().tolist()))
+    ml = c.text_input("ML ID contiene")
+    sku = d.text_input("SKU contiene")
+    titulo = st.text_input("Título contiene")
+    vista = df.copy()
+    for column, value in [("country_code", country), ("cuenta", cuenta)]:
+        if value not in ("Todos", "Todas"):
+            vista = vista[vista[column] == value]
+    for column, value in [("ml_id", ml), ("sku", sku), ("titulo_ecom", titulo)]:
+        if value.strip():
+            vista = vista[vista[column].str.contains(value.strip(), case=False, regex=False, na=False)]
+    for column, label in [("estado_meli", "Estado"), ("tipo_publicacion", "Tipo publicación"),
+                           ("logistica", "Logística")]:
+        if column in vista:
+            options = sorted(vista[column].dropna().astype(str).unique().tolist())
+            chosen = st.selectbox(label, ["Todos"] + options, key=f"roi_filter_{column}")
+            if chosen != "Todos":
+                vista = vista[vista[column].astype(str) == chosen]
+    envio_filter = st.selectbox("Envío gratis actual", ["Todos", "Sí", "No"])
+    if envio_filter != "Todos" and "envio_gratis" in vista:
+        vista = vista[vista.envio_gratis == (envio_filter == "Sí")]
+    limit = st.selectbox("Filas visibles (no limita selección)", [50, 100, 200, 500, 1000], index=2)
+    st.caption(f"{len(vista):,} filas filtradas; {min(limit, len(vista)):,} visibles.")
+    st.dataframe(vista.drop(columns=["_roi_key"]).head(limit), hide_index=True, use_container_width=True)
+    if vista.empty:
+        return
+    lookup = vista.set_index("_roi_key").to_dict(orient="index")
+    valid_keys = list(lookup)
+    existing = st.session_state.get("roi_select_v2", [])
+    st.session_state.roi_select_v2 = [x for x in existing if x in lookup]
+    s1, s2 = st.columns(2)
+    if s1.button("Seleccionar todas las filtradas"):
+        st.session_state.roi_select_v2 = valid_keys
+    if s2.button("Deseleccionar todas"):
+        st.session_state.roi_select_v2 = []
+    selected = st.multiselect("Publicaciones a simular", options=valid_keys, key="roi_select_v2",
+        format_func=lambda key: f"{lookup[key]['country_code']} | {lookup[key]['cuenta']} | "
+                                f"{lookup[key]['ml_id']} | {lookup[key]['titulo_ecom'][:60]}")
+    st.warning("Las tasas de cuotas precargadas son las del script anterior, no una validación de tarifas por país. "
+               "Confirma o reemplaza la tasa para cada mercado. Si mezclas países, se aplica la tasa ingresada a todos.")
+    with st.form("roi_simulation_form_v2"):
+        scenario = st.radio("Escenario", ["Cambio de precio", "ROI objetivo"], horizontal=True)
+        price = st.number_input("Precio nuevo (moneda local de cada publicación)", min_value=0.0, value=0.0, step=100.0)
+        objective = st.number_input("ROI mínimo objetivo (%)", min_value=0.0, max_value=500.0, value=30.0)
+        campaign = st.selectbox("Referencia de cuotas", list(CAMPAIGN_CUOTAS))
+        override = st.checkbox("Ingresar tasa de cuotas manual")
+        manual_rate = st.number_input("Tasa manual de cuotas (%)", min_value=0.0, max_value=99.0, value=0.0)
+        shipping = st.checkbox("Incluir costo de envío a cargo del vendedor", value=True)
+        run = st.form_submit_button("Simular", use_container_width=True)
+    if run:
+        st.session_state.roi_results_v2 = []
+        if not selected:
+            st.warning("Selecciona al menos una publicación.")
+        elif scenario == "Cambio de precio" and price <= 0:
+            st.error("Ingresa un precio mayor a cero.")
+        else:
+            rate = manual_rate / 100 if override else CAMPAIGN_CUOTAS[campaign]
+            results = []
+            with st.spinner("Calculando con tarifas en memoria…"):
+                for key in selected:
+                    product = lookup[key]
+                    try:
+                        suggested = price if scenario == "Cambio de precio" else simular_escenario_2(
+                            product, objective, rate, shipping, st.session_state.roi_tarifas_v2)
+                        sim = calcular_rentabilidad(product, suggested, rate, shipping, st.session_state.roi_tarifas_v2)
+                        results.append({"producto": product, "sim": sim,
+                                        "campania": f"{campaign} · tasa aplicada {rate*100:.2f}%",
+                                        "escenario": scenario, "objetivo": objective})
+                    except Exception as exc:
+                        results.append({"error": f"{product['ml_id']} ({product['country_code']}): {exc}"})
+            st.session_state.roi_results_v2 = results
+    if st.session_state.get("roi_results_v2"):
+        st.subheader("Última simulación enviada")
+        st.caption("Resultados de los parámetros y selección al pulsar Simular. Cambiar filtros no los recalcula.")
+        export = []
+        for item in st.session_state.roi_results_v2:
+            if "error" in item:
+                st.error(item["error"])
                 continue
+            product, sim = item["producto"], item["sim"]
+            with st.expander(f"{product['country_code']} | {product['ml_id']} | {product['titulo_ecom']}", expanded=True):
+                if item["escenario"] == "ROI objetivo":
+                    st.write(f"Precio mínimo calculado para ROI ≥ {item['objetivo']:.2f}%: {fmt(sim['precio_venta_final_sim'])}")
+                mostrar_comparativo(product, sim, item["campania"])
+            export.append({"ml_id": product["ml_id"], "cuenta": product["cuenta"], **sim})
+        if export:
+            st.download_button("Descargar simulaciones CSV", pd.DataFrame(export).to_csv(index=False).encode("utf-8-sig"),
+                               "simulaciones_roi.csv", "text/csv")
 
-            precio_sug = simular_escenario_2(producto, p["pct_obj"], pct_cuotas2, incluir_envio2)
-            sim2 = calcular_rentabilidad(producto, precio_sug, pct_cuotas2, incluir_envio2)
 
-            with st.expander(f"{producto.get('titulo_ecom', '')} | ML: {ml_id}", expanded=True):
-                st.markdown(
-                    f"**Precio sugerido para {p['pct_obj']:.1f}% de rentabilidad: {fmt(precio_sug)}**"
-                )
-                mostrar_comparativo(producto, sim2, nombre_campania=p["campaign"])
+main()
