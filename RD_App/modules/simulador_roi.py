@@ -22,40 +22,24 @@ CAMPAIGN_CUOTAS = {
 
 
 def clasificar_rango_envio(precio, country_code):
-    country_code = str(country_code).strip().upper()
-    if country_code == "AR":
-        if precio < 33000:
-            return "Hasta $32.999"
-        elif precio < 50000:
-            return "De $ 33.000 a $ 49.999"
-        return "Más de $ 50.000"
-    if country_code == "CL":
-        if precio < 9990:
-            return "Hasta $9.989"
-        elif precio < 19990:
-            return "De $9.990 a $19.989"
-        return "Desde $19.990"
-    if country_code == "MX":
-        if precio < 99:
-            return "De $0 a $98,99"
-        elif precio < 199:
-            return "De $99 a $198,99"
-        elif precio < 299:
-            return "De $199 a $298,99"
-        elif precio < 499:
-            return "De $299 a $498,99"
-        elif precio < 999:
-            return "De $499 a $998,99"
-        return "Desde $999"
-    raise ValueError(f"country_code no válido: {country_code!r}. Debe ser AR, CL o MX.")
+    rangos = {
+        "AR": [(33000, "Hasta $32.999"), (50000, "De $ 33.000 a $ 49.999"),
+               (float("inf"), "Más de $ 50.000")],
+        "CL": [(9990, "Hasta $9.989"), (19990, "De $9.990 a $19.989"),
+               (float("inf"), "Desde $19.990")],
+        "MX": [(99, "De $0 a $98,99"), (199, "De $99 a $198,99"),
+               (299, "De $199 a $298,99"), (499, "De $299 a $498,99"),
+               (999, "De $499 a $998,99"), (float("inf"), "Desde $999")],
+    }
+    for limite, etiqueta in rangos[country_code]:
+        if precio < limite:
+            return etiqueta
+    raise ValueError("Precio inválido para clasificar envío.")
 
 
 def clasificar_rango_und(precio, country_code):
-    country_code = str(country_code).strip().upper()
-    if country_code in ("CL", "MX"):
-        return "No Aplica"
     if country_code != "AR":
-        raise ValueError(f"country_code no válido: {country_code!r}.")
+        return "No Aplica"
     if precio < 15000:
         return "Hasta $14.999"
     elif precio < 24000:
@@ -66,8 +50,6 @@ def clasificar_rango_und(precio, country_code):
 
 
 def lookup_costo_und(rango_peso, rango_und, country_code):
-    if country_code != "AR" or rango_und == "No Aplica":
-        return 0.0
     row = fetch_one(
         """
         SELECT "Costo_por_unidad_vendida"
@@ -115,7 +97,9 @@ def calcular_rentabilidad(producto, precio_sim, pct_cuotas, incluir_envio: bool)
     rango_envio = clasificar_rango_envio(precio_sim, country_code)
     rango_und = clasificar_rango_und(precio_sim, country_code)
 
-    if incluir_envio:
+    pisos_envio = {"AR": 33000.0, "CL": 19990.0, "MX": 99.0}
+    # El piso se evalúa con el precio simulado, en ambos escenarios.
+    if incluir_envio and precio_sim >= pisos_envio[country_code]:
         costo_envio_sim = lookup_costo_envio(rango_peso, rango_envio, country_code)
     else:
         costo_envio_sim = 0.0
