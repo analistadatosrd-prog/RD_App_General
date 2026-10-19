@@ -21,52 +21,80 @@ CAMPAIGN_CUOTAS = {
 }
 
 
-def clasificar_rango_envio(precio):
-    if precio <= 32999:
-        return "Hasta $32.999"
-    elif precio <= 49999:
-        return "De $ 33.000 a $ 49.999"
-    else:
+def clasificar_rango_envio(precio, country_code):
+    country_code = str(country_code).strip().upper()
+    if country_code == "AR":
+        if precio < 33000:
+            return "Hasta $32.999"
+        elif precio < 50000:
+            return "De $ 33.000 a $ 49.999"
         return "Más de $ 50.000"
+    if country_code == "CL":
+        if precio < 9990:
+            return "Hasta $9.989"
+        elif precio < 19990:
+            return "De $9.990 a $19.989"
+        return "Desde $19.990"
+    if country_code == "MX":
+        if precio < 99:
+            return "De $0 a $98,99"
+        elif precio < 199:
+            return "De $99 a $198,99"
+        elif precio < 299:
+            return "De $199 a $298,99"
+        elif precio < 499:
+            return "De $299 a $498,99"
+        elif precio < 999:
+            return "De $499 a $998,99"
+        return "Desde $999"
+    raise ValueError(f"country_code no válido: {country_code!r}. Debe ser AR, CL o MX.")
 
 
-def clasificar_rango_und(precio):
-    if precio <= 15999:
-        return "Hasta $15.999"
-    elif precio <= 23999:
-        return "De $16.000 a $23.999"
-    elif precio <= 32999:
-        return "De $24.000 a $32.999"
-    else:
+def clasificar_rango_und(precio, country_code):
+    country_code = str(country_code).strip().upper()
+    if country_code in ("CL", "MX"):
         return "No Aplica"
+    if country_code != "AR":
+        raise ValueError(f"country_code no válido: {country_code!r}.")
+    if precio < 15000:
+        return "Hasta $14.999"
+    elif precio < 24000:
+        return "De $15.000 a $23.999"
+    elif precio < 33000:
+        return "De $24.000 a $32.999"
+    return "No Aplica"
 
 
-def lookup_costo_und(rango_peso, rango_und):
+def lookup_costo_und(rango_peso, rango_und, country_code):
+    if country_code != "AR" or rango_und == "No Aplica":
+        return 0.0
     row = fetch_one(
         """
         SELECT "Costo_por_unidad_vendida"
         FROM rd_tabla_costos
         WHERE rango_peso_facturable = %s
           AND rango_valor_costo_und_vendida = %s
+          AND country_code = %s
         LIMIT 1
         """,
-        (rango_peso, rango_und),
+        (rango_peso, rango_und, country_code),
     )
     if not row:
         return 0.0
     return float(row.get("Costo_por_unidad_vendida") or 0)
 
 
-def lookup_costo_envio(rango_peso, rango_envio):
+def lookup_costo_envio(rango_peso, rango_envio, country_code):
     row = fetch_one(
         """
         SELECT costo_envio
         FROM rd_tabla_costos
         WHERE rango_peso_facturable = %s
           AND rango_valor_costo_envio = %s
+          AND country_code = %s
         LIMIT 1
         """,
-        (rango_peso, rango_envio),
+        (rango_peso, rango_envio, country_code),
     )
     if not row:
         return 0.0
@@ -76,19 +104,24 @@ def lookup_costo_envio(rango_peso, rango_envio):
 def calcular_rentabilidad(producto, precio_sim, pct_cuotas, incluir_envio: bool):
     costo_fijo = float(producto.get("costo_fijo_ecom") or 0)
     pct_venta = float(producto.get("pct_costo_venta") or 0)
-    iva_tasa = float(producto.get("iva_venta") or 0)
+    country_value = producto.get("country_code")
+    country_code = "" if country_value is None or pd.isna(country_value) else str(country_value).strip().upper()
+    iva_por_pais = {"AR": 0.21, "CL": 0.19, "MX": 0.16}
+    if country_code not in iva_por_pais:
+        raise ValueError("Falta country_code válido en la publicación: debe ser AR, CL o MX.")
+    iva_tasa = iva_por_pais[country_code]
     rango_peso = producto.get("rango_peso_facturable")
 
-    rango_envio = clasificar_rango_envio(precio_sim)
-    rango_und = clasificar_rango_und(precio_sim)
+    rango_envio = clasificar_rango_envio(precio_sim, country_code)
+    rango_und = clasificar_rango_und(precio_sim, country_code)
 
     if incluir_envio:
-        costo_envio_sim = lookup_costo_envio(rango_peso, rango_envio)
+        costo_envio_sim = lookup_costo_envio(rango_peso, rango_envio, country_code)
     else:
         costo_envio_sim = 0.0
 
     if rango_und != "No Aplica":
-        costo_und_sim = lookup_costo_und(rango_peso, rango_und)
+        costo_und_sim = lookup_costo_und(rango_peso, rango_und, country_code)
     else:
         costo_und_sim = 0.0
 
@@ -108,8 +141,8 @@ def calcular_rentabilidad(producto, precio_sim, pct_cuotas, incluir_envio: bool)
         precio_sim
         - costo_fijo
         - valor_iva_sim
-        - (costo_envio_sim / 1.21)
-        - (costo_venta_sim / 1.21)
+        - (costo_envio_sim / factor_iva)
+        - (costo_venta_sim / factor_iva)
     )
     pct_rent_sim = (rentabilidad_sim / costo_fijo * 100) if costo_fijo else 0
 
